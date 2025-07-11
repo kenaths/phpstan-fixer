@@ -1,8 +1,56 @@
+# Dependencies
 /vendor/
 /composer.lock
-/.phpunit.result.cache
-/coverage/
-*.bak
-.DS_Store
+
+# IDE and OS files
 .idea/
 .vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Testing
+.phpunit.cache/
+.phpunit.result.cache
+/coverage/
+/.phpstan/
+
+# Build artifacts
+/build/
+/dist/
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.tmp
+
+# Logs
+*.log
+/logs/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Cache directories
+/.cache/
+/cache/
+/tmp/
+
+# Documentation builds
+/docs/_build/
+/docs/.doctrees/
+
+# Project specific
+/examples/*.php.phpstan-fixer.bak
+/setup-*.php
+/project-structure.md
+/*_GUIDE.md
+/*_SUMMARY.md
+
+.phpunit.cache

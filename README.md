@@ -19,7 +19,7 @@ A powerful tool that automatically fixes PHPStan errors in your PHP code. Now wi
 Install via Composer:
 
 ```bash
-composer require --dev phpstan-fixer/phpstan-fixer
+composer require --dev kenaths/phpstan-fixer
 ```
 
 ## Usage
@@ -78,7 +78,7 @@ foreach ($result->getFixedErrors() as $error) {
 6. **Strict Comparisons** - Converts `==` to `===` and `!=` to `!==`
 7. **Null Coalescing** - Converts `isset() ?:` to `??` operator
 8. **PHPDoc Fixes** - Fixes invalid PHPDoc tags
-9. **Missing Iterable Value Types** - Adds type hints for array/iterable values
+9. **Missing Iterable Value Types** - Adds PHPDoc type hints for array/iterable values
 
 ### PHP 8+ Modern Features
 
@@ -92,6 +92,7 @@ foreach ($result->getFixedErrors() as $error) {
 17. **Mixed Type** - Smart inference of `mixed` type
 18. **Match Expressions** - Type inference for match expressions
 19. **First-class Callables** - Proper handling of callable syntax
+20. **Property Hooks** - Basic support for property access patterns
 
 ## Creating Custom Fixers
 

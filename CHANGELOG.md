@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Strict comparisons (== to ===)
   - Null coalescing operator
   - PHPDoc fixes
+- Missing iterable value types (PHPDoc annotations)
 - Modern PHP 8+ feature support:
   - Union types (string|int)
   - Intersection types (Foo&Bar)

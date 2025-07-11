@@ -86,6 +86,7 @@ class PHPStanFixer
         $this->fixerRegistry->register(new Fixers\EnumFixer());
         $this->fixerRegistry->register(new Fixers\ConstructorPromotionFixer());
         $this->fixerRegistry->register(new Fixers\MissingIterableValueTypeFixer());
+        $this->fixerRegistry->register(new Fixers\PropertyHookFixer());
     }
 
     /**

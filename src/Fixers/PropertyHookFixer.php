@@ -5,24 +5,29 @@ declare(strict_types=1);
 namespace PHPStanFixer\Fixers;
 
 use PhpParser\Node;
-use PhpParser\Node\Expr\PropertyFetch;
-use PhpParser\Node\Expr\Variable;
-use PhpParser\Node\Stmt\Return_;
-use PhpParser\NodeFinder;
-use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
 use PHPStanFixer\ValueObjects\Error;
 
+/**
+ * Fixes property hook related errors (PHP 8.4 feature)
+ * Currently handles basic property access patterns
+ */
 class PropertyHookFixer extends AbstractFixer
 {
+    /**
+     * @return array<string>
+     */
     public function getSupportedTypes(): array
     {
-        return ['property_hook_error'];
+        return ['property_hook', 'property_access'];
     }
 
     public function canFix(Error $error): bool
     {
-        return (bool) preg_match('/Backing value of non-virtual property must be read in get hook/', $error->getMessage());
+        return (bool) preg_match(
+            '/property.*hook|Cannot access property|Property.*does not exist/',
+            $error->getMessage()
+        );
     }
 
     public function fix(string $content, Error $error): string
@@ -32,65 +37,74 @@ class PropertyHookFixer extends AbstractFixer
             return $content;
         }
 
-        // Extract property info
-        preg_match('/Property (.*?)::\$(\w+)/', $error->getMessage(), $matches);
+        // Extract property information from error
+        preg_match('/(?:Property|property) ([^:]+)::(\$?\w+)/', $error->getMessage(), $matches);
         $className = $matches[1] ?? '';
-        $propertyName = $matches[2] ?? '';
+        $propertyName = str_replace('$', '', $matches[2] ?? '');
 
-        if (!$className || !$propertyName) {
-            return $content;
-        }
+        $visitor = new class($className, $propertyName, $error->getLine()) extends NodeVisitorAbstract {
+            private string $className;
+            private string $propertyName;
+            private int $targetLine;
+            private ?Node\Stmt\Class_ $currentClass = null;
 
-        $nodeFinder = new NodeFinder();
-
-        // Find the class
-        $class = $nodeFinder->findFirst($stmts, function(Node $node) use ($className) {
-            return $node instanceof Node\Stmt\Class_ && $node->name->name === $className;
-        });
-
-        if (!$class) {
-            return $content;
-        }
-
-        // Find the property
-        $property = $nodeFinder->findFirst($class->stmts, function(Node $node) use ($propertyName) {
-            return $node instanceof Node\Stmt\Property && $node->props[0]->name->name === $propertyName;
-        });
-
-        if (!$property || !$property->getAttribute('hooks')) {
-            return $content;
-        }
-
-        // Find get hook
-        $getHook = null;
-        foreach ($property->getAttribute('hooks') as $hook) {
-            if ($hook instanceof Node\Stmt\PropertyHook && $hook->type === 'get') {
-                $getHook = $hook;
-                break;
+            public function __construct(string $className, string $propertyName, int $targetLine)
+            {
+                $this->className = $className;
+                $this->propertyName = $propertyName;
+                $this->targetLine = $targetLine;
             }
-        }
 
-        if (!$getHook) {
-            return $content;
-        }
+            public function enterNode(Node $node)
+            {
+                if ($node instanceof Node\Stmt\Class_) {
+                    $this->currentClass = $node;
+                }
 
-        // Check if already returns the backing value
-        $returnsBacking = $nodeFinder->findFirst($getHook->stmts, function(Node $node) use ($propertyName) {
-            return $node instanceof Return_ &&
-                   $node->expr instanceof PropertyFetch &&
-                   $node->expr->var instanceof Variable &&
-                   $node->expr->var->name === 'this' &&
-                   $node->expr->name->name === $propertyName;
-        });
+                // Check if we need to add the property
+                if ($this->currentClass !== null 
+                    && $node instanceof Node\Stmt\Class_
+                    && ($node->name === null || $node->name->toString() === $this->className)) {
+                    
+                    $hasProperty = false;
+                    foreach ($node->stmts as $stmt) {
+                        if ($stmt instanceof Node\Stmt\Property) {
+                            foreach ($stmt->props as $prop) {
+                                if ($prop->name->toString() === $this->propertyName) {
+                                    $hasProperty = true;
+                                    break 2;
+                                }
+                            }
+                        }
+                    }
 
-        if ($returnsBacking) {
-            return $content;
-        }
+                    if (!$hasProperty) {
+                        // Add the missing property
+                        $property = new Node\Stmt\Property(
+                            Node\Stmt\Class_::MODIFIER_PRIVATE,
+                            [new Node\Stmt\PropertyProperty($this->propertyName)],
+                            [],
+                            new Node\Identifier('mixed')
+                        );
 
-        // Add return statement
-        $returnStmt = new Return_(new PropertyFetch(new Variable('this'), $propertyName));
-        $getHook->stmts[] = $returnStmt;
+                        // Add at the beginning of the class
+                        array_unshift($node->stmts, $property);
+                    }
+                }
 
+                return null;
+            }
+
+            public function leaveNode(Node $node)
+            {
+                if ($node instanceof Node\Stmt\Class_) {
+                    $this->currentClass = null;
+                }
+                return null;
+            }
+        };
+
+        $stmts = $this->traverseWithVisitor($stmts, $visitor);
         return $this->printCode($stmts);
     }
-} 
+}
