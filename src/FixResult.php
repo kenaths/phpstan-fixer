@@ -1,0 +1,97 @@
+<?php
+
+declare(strict_types=1);
+
+namespace PHPStanFixer;
+
+use PHPStanFixer\ValueObjects\Error;
+
+class FixResult
+{
+    /** @var array<Error> */
+    private array $fixedErrors = [];
+    /** @var array<Error> */
+    private array $unfixableErrors = [];
+    /** @var array<string, string> */
+    private array $fixedFiles = [];
+    /** @var array<string> */
+    private array $errors = [];
+    private string $message = '';
+
+    public function addFixedError(Error $error): void
+    {
+        $this->fixedErrors[] = $error;
+    }
+
+    public function addUnfixableError(Error $error): void
+    {
+        $this->unfixableErrors[] = $error;
+    }
+
+    public function addFixedFile(string $file, string $backupFile): void
+    {
+        $this->fixedFiles[$file] = $backupFile;
+    }
+
+    public function addError(string $error): void
+    {
+        $this->errors[] = $error;
+    }
+
+    public function setMessage(string $message): void
+    {
+        $this->message = $message;
+    }
+
+    /**
+     * @return array<Error>
+     */
+    public function getFixedErrors(): array
+    {
+        return $this->fixedErrors;
+    }
+
+    /**
+     * @return array<Error>
+     */
+    public function getUnfixableErrors(): array
+    {
+        return $this->unfixableErrors;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function getFixedFiles(): array
+    {
+        return $this->fixedFiles;
+    }
+
+    /**
+     * @return array<string>
+     */
+    public function getErrors(): array
+    {
+        return $this->errors;
+    }
+
+    public function getMessage(): string
+    {
+        return $this->message;
+    }
+
+    public function hasErrors(): bool
+    {
+        return !empty($this->errors);
+    }
+
+    public function getFixedCount(): int
+    {
+        return count($this->fixedErrors);
+    }
+
+    public function getUnfixableCount(): int
+    {
+        return count($this->unfixableErrors);
+    }
+}

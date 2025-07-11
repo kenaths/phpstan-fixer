@@ -1,0 +1,33 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use PHPStanFixer\Command\FixCommand;
+use Symfony\Component\Console\Application;
+
+// Find autoloader
+$autoloadFiles = [
+    __DIR__ . '/../vendor/autoload.php',
+    __DIR__ . '/../../../autoload.php',
+    __DIR__ . '/../../../../vendor/autoload.php',
+];
+
+$autoloaderFound = false;
+foreach ($autoloadFiles as $autoloadFile) {
+    if (file_exists($autoloadFile)) {
+        require_once $autoloadFile;
+        $autoloaderFound = true;
+        break;
+    }
+}
+
+if (!$autoloaderFound) {
+    echo 'Autoloader not found. Please run "composer install".' . PHP_EOL;
+    exit(1);
+}
+
+$application = new Application('PHPStan Auto-Fixer', '1.0.0');
+$application->add(new FixCommand());
+$application->setDefaultCommand('fix', true);
+$application->run();
