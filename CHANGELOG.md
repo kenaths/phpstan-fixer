@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2025-01-11
+
+### Changed
+- Added support for PHPStan v2.0 and higher
+- Updated all dependencies to latest versions:
+  - PHPStan ^1.11|^2.0
+  - PHP-Parser v5.5
+  - Symfony components v7.3
+  - PHPUnit v11.5
+- Fixed compatibility issues with PHP-Parser v5
+- Updated test assertions for new formatting
+
 ## [1.0.0] - 2025-01-11
 
 ### Added

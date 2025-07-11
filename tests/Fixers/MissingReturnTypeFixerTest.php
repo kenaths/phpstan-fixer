@@ -56,7 +56,7 @@ PHP;
         $error = new Error('test.php', 3, 'Method Test::getMessage() has no return type specified.');
         $result = $this->fixer->fix($code, $error);
         
-        $this->assertStringContainsString('getMessage() : string', $result);
+        $this->assertStringContainsString('getMessage(): string', $result);
     }
 
     public function testFixesMethodReturningVoid(): void
@@ -74,7 +74,7 @@ PHP;
         $error = new Error('test.php', 3, 'Method Test::doSomething() has no return type specified.');
         $result = $this->fixer->fix($code, $error);
         
-        $this->assertStringContainsString('doSomething() : void', $result);
+        $this->assertStringContainsString('doSomething(): void', $result);
     }
 
     public function testFixesMethodReturningArray(): void
@@ -92,6 +92,6 @@ PHP;
         $error = new Error('test.php', 3, 'Method Test::getData() has no return type specified.');
         $result = $this->fixer->fix($code, $error);
         
-        $this->assertStringContainsString('getData() : array', $result);
+        $this->assertStringContainsString('getData(): array', $result);
     }
 }

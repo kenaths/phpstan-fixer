@@ -44,7 +44,7 @@ PHP;
         $error = new Error('test.php', 3, 'Method Test::getData() should return string|int but returns float');
         $result = $this->fixer->fix($code, $error);
         
-        $this->assertStringContainsString('getData($type) : string|int|float', $result);
+        $this->assertStringContainsString('getData($type): string|int|float', $result);
     }
 
     public function testFixesNullableUnionType(): void
@@ -65,6 +65,6 @@ PHP;
         $error = new Error('test.php', 3, 'Method Test::process() should return string but returns null');
         $result = $this->fixer->fix($code, $error);
         
-        $this->assertStringContainsString('process($data) : ?string', $result);
+        $this->assertStringContainsString('process($data): ?string', $result);
     }
 }

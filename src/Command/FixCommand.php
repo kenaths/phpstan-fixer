@@ -14,13 +14,11 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 
 class FixCommand extends Command
 {
-    protected static $defaultName = 'fix';
-    protected static $defaultDescription = 'Fix PHPStan errors automatically';
-
     protected function configure(): void
     {
         $this
-            ->setDescription(self::$defaultDescription ?? 'Fix PHPStan errors automatically')
+            ->setName('fix')
+            ->setDescription('Fix PHPStan errors automatically')
             ->addArgument('paths', InputArgument::IS_ARRAY | InputArgument::REQUIRED, 'Paths to analyze and fix')
             ->addOption('level', 'l', InputOption::VALUE_REQUIRED, 'PHPStan level (0-9)', '0')
             ->addOption('config', 'c', InputOption::VALUE_REQUIRED, 'Path to PHPStan configuration file')

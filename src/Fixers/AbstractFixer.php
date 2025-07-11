@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace PHPStanFixer\Fixers;
 
-use PhpParser\{Error, Lexer, NodeTraverser, NodeVisitor, Parser, ParserFactory, PrettyPrinter};
+use PhpParser\{Error, NodeTraverser, NodeVisitor, Parser, ParserFactory, PrettyPrinter};
 use PhpParser\Node;
 use PhpParser\NodeFinder;
 use PHPStanFixer\Contracts\FixerInterface;
@@ -18,23 +18,17 @@ abstract class AbstractFixer implements FixerInterface
     protected Parser $parser;
     protected PrettyPrinter\Standard $printer;
     protected NodeFinder $nodeFinder;
-    protected Lexer $lexer;
 
     public function __construct()
     {
-        $this->lexer = new Lexer\Emulative([
-            'usedAttributes' => [
-                'comments',
-                'startLine', 'endLine',
-                'startTokenPos', 'endTokenPos',
-            ],
-        ]);
+        // PHP-Parser v5 compatibility
+        $parserFactory = new ParserFactory();
+        $this->parser = $parserFactory->createForHostVersion();
         
-        $this->parser = (new ParserFactory())->createForHostVersion();
         $this->printer = new PrettyPrinter\Standard([
             'shortArraySyntax' => true,
-            'phpVersion' => 80400, // PHP 8.4
         ]);
+        
         $this->nodeFinder = new NodeFinder();
     }
 
