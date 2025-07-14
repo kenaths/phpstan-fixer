@@ -160,7 +160,7 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                 if (strpos($docText, '@var') !== false) {
                     // Update existing @var tag
                     $docText = preg_replace(
-                        '/@var\s+array\b/',
+                        '/@var\s+array(?!\<)/',
                         '@var ' . $arrayType,
                         $docText
                     );
@@ -196,7 +196,7 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                 if (strpos($docText, '@return') !== false) {
                     // Update existing @return tag
                     $docText = preg_replace(
-                        '/@return\s+array\b/',
+                        '/@return\s+array(?!\<)/',
                         '@return ' . $arrayType,
                         $docText
                     );
