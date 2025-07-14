@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace PHPStanFixer\Runner;
 
+use PHPStanFixer\Util\AutoloadUtil;
 use Symfony\Component\Process\Process;
 
 class PHPStanRunner
@@ -65,10 +66,13 @@ class PHPStanRunner
 
     private function findPHPStan(): string
     {
+        $autoloadUtil = new AutoloadUtil();
+
         $candidates = [
             'vendor/bin/phpstan',
             '../vendor/bin/phpstan',
             '../../vendor/bin/phpstan',
+            $autoloadUtil->getBinFolder() . '/phpstan',
             'phpstan',
         ];
 
