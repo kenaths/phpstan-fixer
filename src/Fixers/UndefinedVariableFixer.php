@@ -45,7 +45,7 @@ class UndefinedVariableFixer extends AbstractFixer
                 $this->targetLine = $targetLine;
             }
 
-            public function enterNode(Node $node)
+            public function enterNode(Node $node): ?Node
             {
                 // Initialize variable at the beginning of the function/method
                 if (!$this->initialized && $node instanceof Node\Stmt\Function_

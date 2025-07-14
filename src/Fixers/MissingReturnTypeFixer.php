@@ -56,16 +56,13 @@ class MissingReturnTypeFixer extends AbstractFixer
                     && $node->returnType === null) {
                     
                     // Try to infer return type from return statements
-                    $returnType = $this->inferReturnType($node);
-                    if ($returnType !== null) {
-                        $node->returnType = $returnType;
-                    }
+                    $node->returnType = $this->inferReturnType($node);
                 }
                 
                 return null;
             }
 
-            private function inferReturnType(Node\Stmt\ClassMethod $method): Node\ComplexType|Node\Identifier|Node\Name
+            private function inferReturnType(Node\Stmt\ClassMethod $method): Node\ComplexType|Node\Name
             {
                 $returns = $this->findReturnStatements($method);
                 
@@ -217,11 +214,9 @@ class MissingReturnTypeFixer extends AbstractFixer
             {
                 $types = [];
                 foreach ($expr->arms as $arm) {
-                    if ($arm->body !== null) {
-                        $type = $this->inferTypeFromExpression($arm->body);
-                        if ($type !== null) {
-                            $types[] = $type;
-                        }
+                    $type = $this->inferTypeFromExpression($arm->body);
+                    if ($type !== null) {
+                        $types[] = $type;
                     }
                 }
                 

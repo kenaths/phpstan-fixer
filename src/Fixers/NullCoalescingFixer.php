@@ -38,7 +38,7 @@ class NullCoalescingFixer extends AbstractFixer
                 $this->targetLine = $targetLine;
             }
 
-            public function enterNode(Node $node)
+            public function enterNode(Node $node): ?Node
             {
                 // Convert isset() ?: to ??
                 if ($node instanceof Node\Expr\Ternary

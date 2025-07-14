@@ -7,9 +7,17 @@ namespace PHPStanFixer\Fixers;
 use PhpParser\Node;
 use PhpParser\NodeVisitorAbstract;
 use PHPStanFixer\ValueObjects\Error;
+use PHPStanFixer\Analyzers\ArrayTypeAnalyzer;
 
 class MissingPropertyTypeFixer extends AbstractFixer
 {
+    private ArrayTypeAnalyzer $arrayAnalyzer;
+
+    public function __construct()
+    {
+        parent::__construct();
+        $this->arrayAnalyzer = new ArrayTypeAnalyzer();
+    }
     /**
      * @return array<string>
      */
@@ -35,14 +43,16 @@ class MissingPropertyTypeFixer extends AbstractFixer
         $className = $matches[1] ?? '';
         $propertyName = $matches[2] ?? '';
 
-        $visitor = new class($propertyName, $error->getLine()) extends NodeVisitorAbstract {
+        $visitor = new class($propertyName, $error->getLine(), $this->arrayAnalyzer) extends NodeVisitorAbstract {
             private string $propertyName;
             private int $targetLine;
+            private ArrayTypeAnalyzer $arrayAnalyzer;
 
-            public function __construct(string $propertyName, int $targetLine)
+            public function __construct(string $propertyName, int $targetLine, ArrayTypeAnalyzer $arrayAnalyzer)
             {
                 $this->propertyName = $propertyName;
                 $this->targetLine = $targetLine;
+                $this->arrayAnalyzer = $arrayAnalyzer;
             }
 
             public function enterNode(Node $node): ?Node
@@ -51,15 +61,11 @@ class MissingPropertyTypeFixer extends AbstractFixer
                     && abs($node->getLine() - $this->targetLine) < 3) {
                     
                     foreach ($node->props as $prop) {
-                        if ($prop instanceof Node\PropertyItem
-                            && $prop->name->toString() === $this->propertyName
+                        if ($prop->name->toString() === $this->propertyName
                             && $node->type === null) {
                             
                             // Try to infer type from default value
-                            $type = $this->inferPropertyType($prop);
-                            if ($type !== null) {
-                                $node->type = $type;
-                            }
+                            $node->type = $this->inferPropertyType($prop, $node);
                         }
                     }
                 }
@@ -67,7 +73,7 @@ class MissingPropertyTypeFixer extends AbstractFixer
                 return null;
             }
 
-            private function inferPropertyType(Node\PropertyItem $prop): Node\Name
+            private function inferPropertyType(Node\PropertyItem $prop, Node\Stmt\Property $property): Node\Name
             {
                 if ($prop->default !== null) {
                     if ($prop->default instanceof Node\Scalar\String_) {
@@ -80,6 +86,13 @@ class MissingPropertyTypeFixer extends AbstractFixer
                         return new Node\Name('float');
                     }
                     if ($prop->default instanceof Node\Expr\Array_) {
+                        // Analyze array type
+                        $arrayTypes = $this->arrayAnalyzer->analyzeArrayType($property, $this->propertyName);
+                        $keyType = $arrayTypes['key'];
+                        $valueType = $arrayTypes['value'];
+                        
+                        // For now, return simple array type - we'd need to enhance PHP-Parser
+                        // to support generic array syntax in type declarations
                         return new Node\Name('array');
                     }
                     if ($prop->default instanceof Node\Expr\ConstFetch) {

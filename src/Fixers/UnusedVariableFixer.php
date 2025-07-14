@@ -45,7 +45,7 @@ class UnusedVariableFixer extends AbstractFixer
                 $this->targetLine = $targetLine;
             }
 
-            public function leaveNode(Node $node)
+            public function leaveNode(Node $node): int|null
             {
                 // Remove assignments to unused variables
                 if ($node instanceof Node\Stmt\Expression

@@ -90,7 +90,7 @@ class UnionTypeFixer extends AbstractFixer
             /**
              * @param array<string> $types
              */
-            private function createUnionFromTypes(array $types): Node\ComplexType|Node\Identifier|Node\Name
+            private function createUnionFromTypes(array $types): Node\ComplexType|Node\Name
             {
                 $nodeTypes = [];
                 $hasNull = false;

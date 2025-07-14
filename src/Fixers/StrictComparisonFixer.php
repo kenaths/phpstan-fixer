@@ -38,7 +38,7 @@ class StrictComparisonFixer extends AbstractFixer
                 $this->targetLine = $targetLine;
             }
 
-            public function enterNode(Node $node)
+            public function enterNode(Node $node): ?Node
             {
                 // Convert == to === and != to !==
                 if ($node instanceof Node\Expr\BinaryOp\Equal

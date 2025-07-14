@@ -60,10 +60,7 @@ class MissingParameterTypeFixer extends AbstractFixer
                             && $param->type === null) {
                             
                             // Try to infer type from usage or default value
-                            $type = $this->inferParameterType($param, $node);
-                            if ($type !== null) {
-                                $param->type = $type;
-                            }
+                            $param->type = $this->inferParameterType($param, $node);
                         }
                     }
                 }

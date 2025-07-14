@@ -54,15 +54,11 @@ class ReadonlyPropertyFixer extends AbstractFixer
             {
                 if ($node instanceof Node\Stmt\Property && abs($node->getLine() - $this->targetLine) < 3) {
                     foreach ($node->props as $prop) {
-                        if ($prop instanceof Node\PropertyItem 
-                            && $prop->name->toString() === $this->propertyName) {
+                        if ($prop->name->toString() === $this->propertyName) {
                             
                             // Add type if missing
                             if ($node->type === null) {
-                                $type = $this->inferPropertyType($prop, $node);
-                                if ($type !== null) {
-                                    $node->type = $type;
-                                }
+                                $node->type = $this->inferPropertyType($prop, $node);
                             }
 
                             // Handle readonly property write errors
@@ -79,7 +75,7 @@ class ReadonlyPropertyFixer extends AbstractFixer
                 return null;
             }
 
-            private function inferPropertyType(Node\PropertyItem $prop, Node\Stmt\Property $property): Node\ComplexType|Node\Identifier|Node\Name|null
+            private function inferPropertyType(Node\PropertyItem $prop, Node\Stmt\Property $property): Node\Name
             {
                 // If property has a default value, infer from it
                 if ($prop->default !== null) {
@@ -96,7 +92,7 @@ class ReadonlyPropertyFixer extends AbstractFixer
                 return new Node\Name('mixed');
             }
 
-            private function inferTypeFromValue(Node $node): Node\ComplexType|Node\Identifier|Node\Name
+            private function inferTypeFromValue(Node $node): Node\Name
             {
                 return match (true) {
                     $node instanceof Node\Scalar\String_ => new Node\Name('string'),

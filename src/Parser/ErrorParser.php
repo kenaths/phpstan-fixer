@@ -25,14 +25,11 @@ class ErrorParser
             // Handle modern PHPStan JSON format
             if (isset($data['files'])) {
                 foreach ($data['files'] as $file => $fileData) {
-                    if (!is_array($fileData) || !isset($fileData['messages'])) {
+                    if (!isset($fileData['messages'])) {
                         continue;
                     }
                     
                     foreach ($fileData['messages'] as $message) {
-                        if (!is_array($message)) {
-                            continue;
-                        }
                         $errors[] = new Error(
                             file: (string) $file,
                             line: (int) ($message['line'] ?? 0),
@@ -54,13 +51,13 @@ class ErrorParser
                             line: 0,
                             message: $error
                         );
-                    } elseif (is_array($error) && isset($error['message'])) {
+                    } elseif (is_array($error)) {
                         // Structured error
                         $errors[] = new Error(
-                            file: isset($error['file']) && is_string($error['file']) ? $error['file'] : 'unknown',
-                            line: isset($error['line']) && is_numeric($error['line']) ? (int) $error['line'] : 0,
+                            file: isset($error['file']) ? (string) $error['file'] : 'unknown',
+                            line: isset($error['line']) ? (int) $error['line'] : 0,
                             message: (string) $error['message'],
-                            identifier: isset($error['identifier']) && is_string($error['identifier']) ? $error['identifier'] : null
+                            identifier: isset($error['identifier']) ? (string) $error['identifier'] : null
                         );
                     }
                 }
