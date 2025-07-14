@@ -42,6 +42,8 @@ class MissingReturnTypeFixer extends AbstractFixer
             private string $methodName;
             private int $targetLine;
 
+            public ?array $fix = null;
+
             public function __construct(string $methodName, int $targetLine)
             {
                 $this->methodName = $methodName;
@@ -56,18 +58,24 @@ class MissingReturnTypeFixer extends AbstractFixer
                     && $node->returnType === null) {
                     
                     // Try to infer return type from return statements
-                    $node->returnType = $this->inferReturnType($node);
+                    $inferredType = $this->inferReturnType($node);
+                    $insertionStart = $node->name->getAttribute('endFilePos') + 1;
+                    if (!empty($node->params)) {
+                        $lastParam = end($node->params);
+                        $insertionStart = $lastParam->getAttribute('endFilePos') + 1;
+                    }
+                    $this->fix = ['insertion_start' => $insertionStart, 'type' => $inferredType];
                 }
                 
                 return null;
             }
 
-            private function inferReturnType(Node\Stmt\ClassMethod $method): Node\ComplexType|Node\Name
+            private function inferReturnType(Node\Stmt\ClassMethod $method): string
             {
                 $returns = $this->findReturnStatements($method);
                 
                 if (empty($returns)) {
-                    return new Node\Name('void');
+                    return 'void';
                 }
 
                 $types = [];
@@ -95,7 +103,7 @@ class MissingReturnTypeFixer extends AbstractFixer
 
                 // If method always throws or exits, return never
                 if ($hasNever && empty($types)) {
-                    return new Node\Name('never');
+                    return 'never';
                 }
 
                 // Remove duplicates
@@ -104,7 +112,7 @@ class MissingReturnTypeFixer extends AbstractFixer
                 // Handle void returns
                 if (in_array('void', $types)) {
                     if (count($types) === 1) {
-                        return new Node\Name('void');
+                        return 'void';
                     }
                     // void cannot be part of a union type
                     $types = array_diff($types, ['void']);
@@ -112,29 +120,23 @@ class MissingReturnTypeFixer extends AbstractFixer
 
                 // No types found, default to mixed
                 if (empty($types)) {
-                    return $hasNull ? new Node\Name('?mixed') : new Node\Name('mixed');
+                    return $hasNull ? '?mixed' : 'mixed';
                 }
 
                 // Single type
                 if (count($types) === 1) {
                     $type = reset($types);
-                    if ($hasNull) {
-                        return new Node\NullableType(new Node\Name($type));
-                    }
-                    return new Node\Name($type);
+                    return $hasNull ? '?' . $type : $type;
                 }
 
                 // Multiple types - create union
-                $nodeTypes = [];
-                foreach ($types as $type) {
-                    $nodeTypes[] = new Node\Name($type);
-                }
-                
+                sort($types);
+                $typeStr = implode('|', $types);
                 if ($hasNull) {
-                    $nodeTypes[] = new Node\Name('null');
+                    $typeStr .= '|null';
                 }
 
-                return new Node\UnionType($nodeTypes);
+                return $typeStr;
             }
 
             private function inferTypeFromExpression(Node $expr): ?string
@@ -253,7 +255,21 @@ class MissingReturnTypeFixer extends AbstractFixer
             }
         };
 
-        $stmts = $this->traverseWithVisitor($stmts, $visitor);
-        return $this->printCode($stmts);
+        $this->traverseWithVisitor($stmts, $visitor);
+        
+        if ($visitor->fix !== null) {
+            $start = $visitor->fix['insertion_start'];
+            $parenPos = strpos($content, ')', $start);
+            if ($parenPos !== false) {
+                $insertPos = $parenPos + 1;
+                while (isset($content[$insertPos]) && ctype_space($content[$insertPos])) {
+                    $insertPos++;
+                }
+                $text = ': ' . $visitor->fix['type'];
+                $content = substr($content, 0, $insertPos) . $text . substr($content, $insertPos);
+            }
+        }
+        
+        return $content;
     }
 }

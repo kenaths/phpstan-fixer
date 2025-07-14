@@ -79,6 +79,59 @@ PHP;
         $this->assertStringNotContainsString('$unused = "test";', $fixedCode);
     }
 
+    public function testPreservesFormatting(): void
+    {
+        $testFile = $this->tempDir . '/FormattedClass.php';
+        $code = <<<'PHP'
+<?php
+
+class FormattedClass {
+
+    public $property = [
+        'key1' => 'value1',
+        'key2' => 'value2',
+    ];
+    
+    // Some comment
+    
+}
+PHP;
+
+        file_put_contents($testFile, $code);
+
+        // Mock error for missing property type
+        $mockRunner = $this->createMock(PHPStanRunner::class);
+        $mockRunner->method('analyze')->willReturnOnConsecutiveCalls(
+            json_encode([
+                'files' => [
+                    $testFile => [
+                        'messages' => [
+                            ['line' => 5, 'message' => 'Property FormattedClass::$property has no type specified.'],
+                        ]
+                    ]
+                ]
+            ]),
+            json_encode(['files' => []]) // After fix, no errors
+        );
+
+        $fixer = new PHPStanFixer($mockRunner);
+        $fixer->fix([$testFile], 6, [], true);
+
+        $fixedCode = file_get_contents($testFile);
+
+        // Check if type was added
+        $this->assertStringContainsString('public array $property', $fixedCode);
+
+        // Check if multi-line array preserved
+        $this->assertStringContainsString("[
+        'key1' => 'value1',
+        'key2' => 'value2',
+    ]", $fixedCode);
+
+        // Check empty lines preserved
+        $this->assertEquals(substr_count($code, "\n\n"), substr_count($fixedCode, "\n\n"));
+    }
+
     private function removeDirectory(string $dir): void
     {
         if (!is_dir($dir)) {

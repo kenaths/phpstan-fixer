@@ -41,6 +41,8 @@ class MissingParameterTypeFixer extends AbstractFixer
             private string $paramName;
             private int $targetLine;
 
+            public ?array $fix = null;
+
             public function __construct(string $methodName, string $paramName, int $targetLine)
             {
                 $this->methodName = $methodName;
@@ -60,7 +62,9 @@ class MissingParameterTypeFixer extends AbstractFixer
                             && $param->type === null) {
                             
                             // Try to infer type from usage or default value
-                            $param->type = $this->inferParameterType($param, $node);
+                            $inferredType = $this->inferParameterType($param, $node);
+                            $insertionPos = $param->var->getAttribute('startFilePos');
+                            $this->fix = ['pos' => $insertionPos, 'text' => $inferredType . ' '];
                         }
                     }
                 }
@@ -68,39 +72,46 @@ class MissingParameterTypeFixer extends AbstractFixer
                 return null;
             }
 
-            private function inferParameterType(Node\Param $param, Node\Stmt\ClassMethod $method): Node\Name
+            private function inferParameterType(Node\Param $param, Node\Stmt\ClassMethod $method): string
             {
                 // Check default value
                 if ($param->default !== null) {
                     if ($param->default instanceof Node\Scalar\String_) {
-                        return new Node\Name('string');
+                        return 'string';
                     }
                     if ($param->default instanceof Node\Scalar\LNumber) {
-                        return new Node\Name('int');
+                        return 'int';
                     }
                     if ($param->default instanceof Node\Scalar\DNumber) {
-                        return new Node\Name('float');
+                        return 'float';
                     }
                     if ($param->default instanceof Node\Expr\Array_) {
-                        return new Node\Name('array');
+                        return 'array';
                     }
                     if ($param->default instanceof Node\Expr\ConstFetch) {
                         $name = $param->default->name->toLowerString();
                         if ($name === 'true' || $name === 'false') {
-                            return new Node\Name('bool');
+                            return 'bool';
                         }
                         if ($name === 'null') {
-                            return new Node\Name('?mixed');
+                            return '?mixed';
                         }
                     }
                 }
 
                 // Default to mixed
-                return new Node\Name('mixed');
+                return 'mixed';
             }
         };
 
-        $stmts = $this->traverseWithVisitor($stmts, $visitor);
-        return $this->printCode($stmts);
+        $this->traverseWithVisitor($stmts, $visitor);
+        
+        if ($visitor->fix !== null) {
+            $pos = $visitor->fix['pos'];
+            $text = $visitor->fix['text'];
+            $content = substr($content, 0, $pos) . $text . substr($content, $pos);
+        }
+        
+        return $content;
     }
 }

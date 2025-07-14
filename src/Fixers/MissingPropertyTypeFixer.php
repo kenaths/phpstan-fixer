@@ -48,6 +48,8 @@ class MissingPropertyTypeFixer extends AbstractFixer
             private int $targetLine;
             private ArrayTypeAnalyzer $arrayAnalyzer;
 
+            public ?array $fix = null;
+
             public function __construct(string $propertyName, int $targetLine, ArrayTypeAnalyzer $arrayAnalyzer)
             {
                 $this->propertyName = $propertyName;
@@ -65,7 +67,9 @@ class MissingPropertyTypeFixer extends AbstractFixer
                             && $node->type === null) {
                             
                             // Try to infer type from default value
-                            $node->type = $this->inferPropertyType($prop, $node);
+                            $inferredType = $this->inferPropertyType($prop, $node);
+                            $insertionPos = $prop->getAttribute('startFilePos');
+                            $this->fix = ['pos' => $insertionPos, 'text' => $inferredType . ' '];
                         }
                     }
                 }
@@ -73,17 +77,17 @@ class MissingPropertyTypeFixer extends AbstractFixer
                 return null;
             }
 
-            private function inferPropertyType(Node\PropertyItem $prop, Node\Stmt\Property $property): Node\Name
+            private function inferPropertyType(Node\PropertyItem $prop, Node\Stmt\Property $property): string
             {
                 if ($prop->default !== null) {
                     if ($prop->default instanceof Node\Scalar\String_) {
-                        return new Node\Name('string');
+                        return 'string';
                     }
                     if ($prop->default instanceof Node\Scalar\LNumber) {
-                        return new Node\Name('int');
+                        return 'int';
                     }
                     if ($prop->default instanceof Node\Scalar\DNumber) {
-                        return new Node\Name('float');
+                        return 'float';
                     }
                     if ($prop->default instanceof Node\Expr\Array_) {
                         // Analyze array type
@@ -93,24 +97,31 @@ class MissingPropertyTypeFixer extends AbstractFixer
                         
                         // For now, return simple array type - we'd need to enhance PHP-Parser
                         // to support generic array syntax in type declarations
-                        return new Node\Name('array');
+                        return 'array';
                     }
                     if ($prop->default instanceof Node\Expr\ConstFetch) {
                         $name = $prop->default->name->toLowerString();
                         if ($name === 'true' || $name === 'false') {
-                            return new Node\Name('bool');
+                            return 'bool';
                         }
                         if ($name === 'null') {
-                            return new Node\Name('?mixed');
+                            return '?mixed';
                         }
                     }
                 }
 
-                return new Node\Name('mixed');
+                return 'mixed';
             }
         };
 
-        $stmts = $this->traverseWithVisitor($stmts, $visitor);
-        return $this->printCode($stmts);
+        $this->traverseWithVisitor($stmts, $visitor);
+        
+        if ($visitor->fix !== null) {
+            $pos = $visitor->fix['pos'];
+            $text = $visitor->fix['text'];
+            $content = substr($content, 0, $pos) . $text . substr($content, $pos);
+        }
+        
+        return $content;
     }
 }
