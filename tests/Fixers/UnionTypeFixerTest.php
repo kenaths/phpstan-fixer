@@ -67,4 +67,26 @@ PHP;
         
         $this->assertMatchesRegularExpression('/process\\s*\\(.*?\\)\\s*:\\s*\\?string/', $result);
     }
+
+    public function testDoesNotFixClosureParameter(): void
+    {
+        $code = <<<'PHP'
+<?php
+class Test {
+    protected function allLabelsCanceled(Shipment $shipment): bool
+    {
+        $shipment->loadMissing('labels');
+
+        return $shipment->labels->every(fn (Label $label) => $label->canceled_at !== null);
+    }
+}
+PHP;
+
+        $error = new Error('test.php', 3, 'Parameter #1 $shipment of method Test::allLabelsCanceled() expects Shipment, string given');
+        $result = $this->fixer->fix($code, $error);
+
+        $this->assertStringContainsString('allLabelsCanceled(Shipment $shipment): bool', $result);
+        $this->assertStringContainsString('fn (Label $label) => $label->canceled_at !== null', $result);
+        $this->assertDoesNotMatchRegularExpression('/fn \(.*?\|.*?\) =>/', $result);
+    }
 }

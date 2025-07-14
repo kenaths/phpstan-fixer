@@ -94,4 +94,44 @@ PHP;
         
         $this->assertMatchesRegularExpression('/getData\\s*\\(\\)\\s*:\\s*array/', $result);
     }
+
+    public function testDoesNotInferReturnTypeFromClosure(): void
+    {
+        $code = <<<'PHP'
+<?php
+class MacroServiceProvider
+{
+    public function boot()
+    {
+        Builder::macro('findAllOr', function (iterable $keys): \Illuminate\Support\Collection {
+            return new \Illuminate\Support\Collection();
+        });
+    }
+}
+PHP;
+
+        $error = new Error('test.php', 4, 'Method MacroServiceProvider::boot() has no return type specified.');
+        $result = $this->fixer->fix($code, $error);
+
+        $this->assertMatchesRegularExpression('/public function boot\\s*\\(\\)\\s*:\\s*void/', $result);
+    }
+
+    public function testDoesNotInferReturnTypeFromArrowFunction(): void
+    {
+        $code = <<<'PHP'
+<?php
+class TestServiceProvider
+{
+    public function boot()
+    {
+        $fn = fn(): int => 123;
+    }
+}
+PHP;
+
+        $error = new Error('test.php', 4, 'Method TestServiceProvider::boot() has no return type specified.');
+        $result = $this->fixer->fix($code, $error);
+
+        $this->assertMatchesRegularExpression('/public function boot\\s*\\(\\)\\s*:\\s*void/', $result);
+    }
 }

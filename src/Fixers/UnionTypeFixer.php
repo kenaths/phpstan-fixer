@@ -67,13 +67,17 @@ class UnionTypeFixer extends AbstractFixer
 
                 if ($node instanceof Node\Param && abs($node->getLine() - $this->targetLine) < 3) {
                     // Handle parameter type unions
-                    if (preg_match('/Parameter .* expects (.+) given/', $this->message, $matches)) {
-                        $types = $this->parseTypeString($matches[1]);
-                        if (count($types) > 1) {
-                            $typeNode = $this->createUnionFromTypes($types);
-                            $typeStr = $this->typeToString($typeNode);
-                            $insertionPos = $node->var->getAttribute('startFilePos');
-                            $this->fix = ['kind' => 'param', 'pos' => $insertionPos, 'type' => $typeStr];
+                    if (preg_match('/Parameter #\\d+ \\$(\\w+) .* expects (.+) given/', $this->message, $matches)) {
+                        $paramName = $matches[1];
+                        $expected = $matches[2];
+                        if ($node->var instanceof Node\Expr\Variable && $node->var->name === $paramName) {
+                            $types = $this->parseTypeString($expected);
+                            if (count($types) > 1) {
+                                $typeNode = $this->createUnionFromTypes($types);
+                                $typeStr = $this->typeToString($typeNode);
+                                $insertionPos = $node->var->getAttribute('startFilePos');
+                                $this->fix = ['kind' => 'param', 'pos' => $insertionPos, 'type' => $typeStr];
+                            }
                         }
                     }
                 }

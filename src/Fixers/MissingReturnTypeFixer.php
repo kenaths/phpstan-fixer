@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace PHPStanFixer\Fixers;
 
 use PhpParser\Node;
+use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
 use PHPStanFixer\ValueObjects\Error;
 
@@ -35,7 +36,6 @@ class MissingReturnTypeFixer extends AbstractFixer
 
         // Extract method name from error message
         preg_match('/Method (.*?)::(\w+)\(\)/', $error->getMessage(), $matches);
-        $className = $matches[1] ?? '';
         $methodName = $matches[2] ?? '';
 
         $visitor = new class($methodName, $error->getLine()) extends NodeVisitorAbstract {
@@ -43,6 +43,7 @@ class MissingReturnTypeFixer extends AbstractFixer
             private int $targetLine;
 
             public ?array $fix = null;
+            public ?array $docFix = null;
 
             public function __construct(string $methodName, int $targetLine)
             {
@@ -54,17 +55,25 @@ class MissingReturnTypeFixer extends AbstractFixer
             {
                 if ($node instanceof Node\Stmt\ClassMethod 
                     && $node->name->toString() === $this->methodName
-                    && $node->getLine() <= $this->targetLine
-                    && $node->returnType === null) {
+                    && $node->getLine() <= $this->targetLine) {
                     
                     // Try to infer return type from return statements
                     $inferredType = $this->inferReturnType($node);
-                    $insertionStart = $node->name->getAttribute('endFilePos') + 1;
-                    if (!empty($node->params)) {
-                        $lastParam = end($node->params);
-                        $insertionStart = $lastParam->getAttribute('endFilePos') + 1;
+                    $arrayDetails = $this->analyzeArrayReturnType($node);
+                    
+                    if ($node->returnType === null) {
+                        $insertionStart = $node->name->getAttribute('endFilePos') + 1;
+                        if (!empty($node->params)) {
+                            $lastParam = end($node->params);
+                            $insertionStart = $lastParam->getAttribute('endFilePos') + 1;
+                        }
+                        $this->fix = ['insertion_start' => $insertionStart, 'type' => $inferredType];
                     }
-                    $this->fix = ['insertion_start' => $insertionStart, 'type' => $inferredType];
+                    
+                    // If we have array details, add PHPDoc
+                    if ($arrayDetails !== null && ($inferredType === 'array' || ($node->returnType && $node->returnType->toString() === 'array'))) {
+                        $this->docFix = $this->createDocBlockFix($node, $arrayDetails);
+                    }
                 }
                 
                 return null;
@@ -231,32 +240,225 @@ class MissingReturnTypeFixer extends AbstractFixer
              */
             private function findReturnStatements(Node $node): array
             {
-                $returns = [];
-                
-                if ($node instanceof Node\Stmt\Return_) {
-                    $returns[] = $node;
+                $traverser = new NodeTraverser();
+                $visitor = new class() extends NodeVisitorAbstract {
+                    public array $returnNodes = [];
+
+                    public function enterNode(Node $node): ?int
+                    {
+                        if ($node instanceof Node\Expr\Closure ||
+                            $node instanceof Node\Expr\ArrowFunction ||
+                            $node instanceof Node\Stmt\Function_ ||
+                            $node instanceof Node\Stmt\Class_
+                        ) {
+                            return NodeTraverser::DONT_TRAVERSE_CHILDREN;
+                        }
+
+                        return null;
+                    }
+
+                    public function leaveNode(Node $node): ?Node
+                    {
+                        if ($node instanceof Node\Stmt\Return_) {
+                            $this->returnNodes[] = $node;
+                        }
+
+                        return null;
+                    }
+                };
+
+                $traverser->addVisitor($visitor);
+
+                if (($node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Stmt\Function_) && !empty($node->stmts)) {
+                    $traverser->traverse($node->stmts);
                 }
+
+                return $visitor->returnNodes;
+            }
+
+            /**
+             * Analyze array return type to get specific key/value types
+             */
+            private function analyzeArrayReturnType(Node\Stmt\ClassMethod $method): ?array
+            {
+                $returns = $this->findReturnStatements($method);
                 
-                foreach ($node->getSubNodeNames() as $name) {
-                    $subNode = $node->$name;
-                    
-                    if ($subNode instanceof Node) {
-                        $returns = array_merge($returns, $this->findReturnStatements($subNode));
-                    } elseif (is_array($subNode)) {
-                        foreach ($subNode as $child) {
-                            if ($child instanceof Node) {
-                                $returns = array_merge($returns, $this->findReturnStatements($child));
+                $keyTypes = [];
+                $valueTypes = [];
+                $hasArrayReturn = false;
+
+                foreach ($returns as $return) {
+                    if ($return->expr instanceof Node\Expr\Array_) {
+                        $hasArrayReturn = true;
+                        $this->analyzeArrayExpression($return->expr, $keyTypes, $valueTypes);
+                    } elseif ($return->expr instanceof Node\Expr\Variable) {
+                        // Try to trace the variable
+                        $varName = $return->expr->name;
+                        if (is_string($varName)) {
+                            $arrayInfo = $this->findVariableArrayAssignment($method, $varName);
+                            if ($arrayInfo !== null) {
+                                $hasArrayReturn = true;
+                                $this->analyzeArrayExpression($arrayInfo, $keyTypes, $valueTypes);
                             }
                         }
                     }
                 }
+
+                if (!$hasArrayReturn) {
+                    return null;
+                }
+
+                $keyType = $this->determineArrayType($keyTypes, 'int');
+                $valueType = $this->determineArrayType($valueTypes, 'mixed');
+
+                return ['key' => $keyType, 'value' => $valueType];
+            }
+
+            /**
+             * Analyze array expression to extract key and value types
+             */
+            private function analyzeArrayExpression(Node\Expr\Array_ $array, array &$keyTypes, array &$valueTypes): void
+            {
+                foreach ($array->items as $item) {
+                    // Analyze key
+                    if ($item->key !== null) {
+                        $keyType = $this->inferTypeFromExpression($item->key);
+                        if ($keyType !== null && $keyType !== 'null') {
+                            $keyTypes[] = $keyType;
+                        }
+                    } else {
+                        $keyTypes[] = 'int';
+                    }
+
+                    // Analyze value
+                    $valueType = $this->inferTypeFromExpression($item->value);
+                    if ($valueType !== null && $valueType !== 'null') {
+                        $valueTypes[] = $valueType;
+                    }
+                }
+            }
+
+            /**
+             * Find array assignment to a variable
+             */
+            private function findVariableArrayAssignment(Node $scope, string $varName): ?Node\Expr\Array_
+            {
+                $assignment = null;
                 
-                return $returns;
+                $this->traverseNode($scope, function (Node $node) use ($varName, &$assignment) {
+                    if ($node instanceof Node\Expr\Assign 
+                        && $node->var instanceof Node\Expr\Variable
+                        && $node->var->name === $varName
+                        && $node->expr instanceof Node\Expr\Array_) {
+                        $assignment = $node->expr;
+                    }
+                });
+                
+                return $assignment;
+            }
+
+            /**
+             * Traverse a node with a callback
+             */
+            private function traverseNode(Node $node, callable $callback): void
+            {
+                $callback($node);
+                
+                foreach ($node->getSubNodeNames() as $name) {
+                    $subNode = $node->$name;
+                    if ($subNode instanceof Node) {
+                        $this->traverseNode($subNode, $callback);
+                    } elseif (is_array($subNode)) {
+                        foreach ($subNode as $child) {
+                            if ($child instanceof Node) {
+                                $this->traverseNode($child, $callback);
+                            }
+                        }
+                    }
+                }
+            }
+
+            /**
+             * Determine the most specific array type
+             */
+            private function determineArrayType(array $types, string $default = 'mixed'): string
+            {
+                if (empty($types)) {
+                    return $default;
+                }
+
+                $uniqueTypes = array_unique($types);
+                if (count($uniqueTypes) === 1) {
+                    return reset($uniqueTypes);
+                }
+
+                // If we have multiple types, create a union (up to 3 types)
+                $typeCounts = array_count_values($types);
+                arsort($typeCounts);
+                $topTypes = array_slice(array_keys($typeCounts), 0, 3);
+                
+                return implode('|', $topTypes);
+            }
+
+            /**
+             * Create a docblock fix for array return type
+             */
+            private function createDocBlockFix(Node\Stmt\ClassMethod $method, array $arrayDetails): array
+            {
+                $existingDoc = $method->getDocComment();
+                $docText = $existingDoc ? $existingDoc->getText() : '';
+                
+                $keyType = $arrayDetails['key'];
+                $valueType = $arrayDetails['value'];
+                
+                // Format array type
+                $arrayType = $keyType === 'int' ? "array<{$valueType}>" : "array<{$keyType}, {$valueType}>";
+                
+                if (!empty($docText)) {
+                    // Check if @return already exists
+                    if (preg_match('/@return\s+array\b/', $docText)) {
+                        // Update existing @return
+                        $docText = preg_replace(
+                            '/@return\s+array\b/',
+                            '@return ' . $arrayType,
+                            $docText
+                        );
+                    } else if (!preg_match('/@return/', $docText)) {
+                        // Add @return before closing */
+                        $docText = str_replace('*/', "* @return {$arrayType}\n */", $docText);
+                    }
+                } else {
+                    // Create new docblock
+                    $indent = str_repeat(' ', max(0, $method->getAttribute('startColumn', 4) - 1));
+                    $docText = "/**\n{$indent} * @return {$arrayType}\n{$indent} */";
+                }
+                
+                if ($existingDoc) {
+                    return [
+                        'start' => $existingDoc->getStartFilePos(),
+                        'end' => $existingDoc->getEndFilePos() + 1,
+                        'text' => $docText
+                    ];
+                } else {
+                    return [
+                        'start' => $method->getAttribute('startFilePos'),
+                        'end' => $method->getAttribute('startFilePos'),
+                        'text' => $docText . "\n" . str_repeat(' ', max(0, $method->getAttribute('startColumn', 4) - 1))
+                    ];
+                }
             }
         };
 
         $this->traverseWithVisitor($stmts, $visitor);
         
+        // Apply docblock fix first if needed
+        if ($visitor->docFix !== null) {
+            $content = substr($content, 0, $visitor->docFix['start']) . 
+                      $visitor->docFix['text'] . 
+                      substr($content, $visitor->docFix['end']);
+        }
+        
+        // Apply return type fix
         if ($visitor->fix !== null) {
             $start = $visitor->fix['insertion_start'];
             $parenPos = strpos($content, ')', $start);
