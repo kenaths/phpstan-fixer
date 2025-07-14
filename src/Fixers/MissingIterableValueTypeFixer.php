@@ -83,6 +83,8 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                 $this->arrayAnalyzer = $arrayAnalyzer;
             }
 
+            public array $fixes = [];
+
             public function enterNode(Node $node): ?Node
             {
                 // Handle property declarations
@@ -91,7 +93,7 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                         if ($prop->name->toString() === $this->targetName 
                             && abs($node->getLine() - $this->targetLine) <= 5) {
                             $this->addIterableTypeDoc($node);
-                            return $node;
+                            return null;
                         }
                     }
                 }
@@ -105,7 +107,7 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                                 if ($param->var instanceof Node\Expr\Variable 
                                     && $param->var->name === $this->paramName) {
                                     $this->addIterableParamDocToMethod($node, $this->paramName);
-                                    return $node;
+                                    return null;
                                 }
                             }
                         }
@@ -115,7 +117,7 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                             if ($param->var instanceof Node\Expr\Variable 
                                 && $param->var->name === $this->targetName) {
                                 $this->addIterableParamDocToMethod($node, $this->targetName);
-                                return $node;
+                                return null;
                             }
                         }
                     }
@@ -127,17 +129,22 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                     && $node->name->toString() === $this->targetName
                     && abs($node->getLine() - $this->targetLine) < 10) {
                     $this->addIterableReturnTypeDoc($node);
-                    return $node;
+                    return null;
                 }
 
                 // Handle function parameters
                 if ($node instanceof Node\Stmt\Function_ 
                     && $node->name->toString() === $this->targetName) {
                     $this->addIterableParamTypeDoc($node);
-                    return $node;
+                    return null;
                 }
 
                 return null;
+            }
+
+            private function addFix(int $start, int $end, string $text): void
+            {
+                $this->fixes[] = ['start' => $start, 'end' => $end, 'text' => $text];
             }
 
             private function addIterableTypeDoc(Node\Stmt\Property $node): void
@@ -166,7 +173,14 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                     }
                 }
 
-                $node->setDocComment(new Doc($docText));
+                if ($existingDoc) {
+                    $start = $existingDoc->getStartFilePos();
+                    $end = $existingDoc->getEndFilePos() + 1;
+                    $this->addFix($start, $end, $docText);
+                } else {
+                    $start = $node->getAttribute('startFilePos');
+                    $this->addFix($start, $start, $docText . "\n");
+                }
             }
 
             private function addIterableReturnTypeDoc(Node\Stmt\ClassMethod $node): void
@@ -195,7 +209,14 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                     }
                 }
 
-                $node->setDocComment(new Doc($docText));
+                if ($existingDoc) {
+                    $start = $existingDoc->getStartFilePos();
+                    $end = $existingDoc->getEndFilePos() + 1;
+                    $this->addFix($start, $end, $docText);
+                } else {
+                    $start = $node->getAttribute('startFilePos');
+                    $this->addFix($start, $start, $docText . "\n");
+                }
             }
 
             private function addIterableParamTypeDoc(Node\Stmt\Function_ $node): void
@@ -269,7 +290,14 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                     }
                 }
 
-                $node->setDocComment(new Doc($docText));
+                if ($existingDoc) {
+                    $start = $existingDoc->getStartFilePos();
+                    $end = $existingDoc->getEndFilePos() + 1;
+                    $this->addFix($start, $end, $docText);
+                } else {
+                    $start = $node->getAttribute('startFilePos');
+                    $this->addFix($start, $start, $docText . "\n");
+                }
             }
 
             private function getParamType(Node\Param $param): string
@@ -466,7 +494,12 @@ class MissingIterableValueTypeFixer extends AbstractFixer
             }
         };
 
-        $stmts = $this->traverseWithVisitor($stmts, $visitor);
-        return $this->printCode($stmts);
+        $this->traverseWithVisitor($stmts, $visitor);
+
+        foreach ($visitor->fixes as $fix) {
+            $content = substr($content, 0, $fix['start']) . $fix['text'] . substr($content, $fix['end']);
+        }
+
+        return $content;
     }
 }

@@ -37,6 +37,8 @@ class UnionTypeFixer extends AbstractFixer
             private int $targetLine;
             private string $message;
 
+            public ?array $fix = null;
+
             public function __construct(int $targetLine, string $message)
             {
                 $this->targetLine = $targetLine;
@@ -52,7 +54,14 @@ class UnionTypeFixer extends AbstractFixer
                         $actualTypes = $this->parseTypeString($matches[2]);
                         
                         $unionTypes = array_unique(array_merge($expectedTypes, $actualTypes));
-                        $node->returnType = $this->createUnionFromTypes($unionTypes);
+                        $typeNode = $this->createUnionFromTypes($unionTypes);
+                        $typeStr = $this->typeToString($typeNode);
+                        $insertionStart = $node->name->getAttribute('endFilePos') + 1;
+                        if (!empty($node->params)) {
+                            $last = end($node->params);
+                            $insertionStart = $last->getAttribute('endFilePos') + 1;
+                        }
+                        $this->fix = ['kind' => 'return', 'start' => $insertionStart, 'type' => $typeStr];
                     }
                 }
 
@@ -61,7 +70,10 @@ class UnionTypeFixer extends AbstractFixer
                     if (preg_match('/Parameter .* expects (.+) given/', $this->message, $matches)) {
                         $types = $this->parseTypeString($matches[1]);
                         if (count($types) > 1) {
-                            $node->type = $this->createUnionFromTypes($types);
+                            $typeNode = $this->createUnionFromTypes($types);
+                            $typeStr = $this->typeToString($typeNode);
+                            $insertionPos = $node->var->getAttribute('startFilePos');
+                            $this->fix = ['kind' => 'param', 'pos' => $insertionPos, 'type' => $typeStr];
                         }
                     }
                 }
@@ -118,9 +130,38 @@ class UnionTypeFixer extends AbstractFixer
 
                 return new Node\UnionType($nodeTypes);
             }
+
+            private function typeToString(Node $typeNode): string
+            {
+                if ($typeNode instanceof Node\Name) return $typeNode->toString();
+                if ($typeNode instanceof Node\NullableType) return '?' . $this->typeToString($typeNode->type);
+                if ($typeNode instanceof Node\UnionType) return implode('|', array_map([$this, 'typeToString'], $typeNode->types));
+                return 'mixed';
+            }
         };
 
-        $stmts = $this->traverseWithVisitor($stmts, $visitor);
-        return $this->printCode($stmts);
+        $this->traverseWithVisitor($stmts, $visitor);
+
+        if ($visitor->fix !== null) {
+            $fix = $visitor->fix;
+            if ($fix['kind'] === 'param') {
+                $pos = $fix['pos'];
+                $text = $fix['type'] . ' ';
+                $content = substr($content, 0, $pos) . $text . substr($content, $pos);
+            } elseif ($fix['kind'] === 'return') {
+                $start = $fix['start'];
+                $parenPos = strpos($content, ')', $start);
+                if ($parenPos !== false) {
+                    $pos = $parenPos + 1;
+                    while (isset($content[$pos]) && ctype_space($content[$pos])) {
+                        $pos++;
+                    }
+                    $text = ': ' . $fix['type'];
+                    $content = substr($content, 0, $pos) . $text . substr($content, $pos);
+                }
+            }
+        }
+
+        return $content;
     }
 }
