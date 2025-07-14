@@ -416,10 +416,10 @@ class MissingReturnTypeFixer extends AbstractFixer
                 
                 if (!empty($docText)) {
                     // Check if @return already exists
-                    if (preg_match('/@return\s+array\b/', $docText)) {
+                    if (preg_match('/@return\s+array(?!\<)/', $docText)) {
                         // Update existing @return
                         $docText = preg_replace(
-                            '/@return\s+array\b/',
+                            '/@return\s+array(?!\<)/',
                             '@return ' . $arrayType,
                             $docText
                         );
