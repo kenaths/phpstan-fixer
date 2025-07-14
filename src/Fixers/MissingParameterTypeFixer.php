@@ -71,7 +71,7 @@ class MissingParameterTypeFixer extends AbstractFixer
                 return null;
             }
 
-            private function inferParameterType(Node\Param $param, Node\Stmt\ClassMethod $method): ?Node\Name
+            private function inferParameterType(Node\Param $param, Node\Stmt\ClassMethod $method): Node\Name
             {
                 // Check default value
                 if ($param->default !== null) {

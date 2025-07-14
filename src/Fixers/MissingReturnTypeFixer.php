@@ -65,7 +65,7 @@ class MissingReturnTypeFixer extends AbstractFixer
                 return null;
             }
 
-            private function inferReturnType(Node\Stmt\ClassMethod $method): ?Node
+            private function inferReturnType(Node\Stmt\ClassMethod $method): Node\ComplexType|Node\Identifier|Node\Name
             {
                 $returns = $this->findReturnStatements($method);
                 
@@ -181,7 +181,7 @@ class MissingReturnTypeFixer extends AbstractFixer
                 };
             }
 
-            private function inferVariableType(Node\Expr\Variable $expr): ?string
+            private function inferVariableType(Node\Expr\Variable $expr): string
             {
                 // For $this, return self
                 if ($expr->name === 'this') {
@@ -190,7 +190,7 @@ class MissingReturnTypeFixer extends AbstractFixer
                 return 'mixed';
             }
 
-            private function inferFunctionReturnType(Node\Expr\FuncCall $expr): ?string
+            private function inferFunctionReturnType(Node\Expr\FuncCall $expr): string
             {
                 if ($expr->name instanceof Node\Name) {
                     $funcName = $expr->name->toLowerString();
@@ -205,7 +205,7 @@ class MissingReturnTypeFixer extends AbstractFixer
                 return 'mixed';
             }
 
-            private function inferNewType(Node\Expr\New_ $expr): ?string
+            private function inferNewType(Node\Expr\New_ $expr): string
             {
                 if ($expr->class instanceof Node\Name) {
                     return $expr->class->toString();
@@ -213,7 +213,7 @@ class MissingReturnTypeFixer extends AbstractFixer
                 return 'object';
             }
 
-            private function inferMatchType(Node\Expr\Match_ $expr): ?string
+            private function inferMatchType(Node\Expr\Match_ $expr): string
             {
                 $types = [];
                 foreach ($expr->arms as $arm) {

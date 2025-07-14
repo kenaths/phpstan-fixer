@@ -51,7 +51,7 @@ class MissingPropertyTypeFixer extends AbstractFixer
                     && abs($node->getLine() - $this->targetLine) < 3) {
                     
                     foreach ($node->props as $prop) {
-                        if ($prop instanceof Node\Stmt\PropertyProperty
+                        if ($prop instanceof Node\PropertyItem
                             && $prop->name->toString() === $this->propertyName
                             && $node->type === null) {
                             
@@ -67,7 +67,7 @@ class MissingPropertyTypeFixer extends AbstractFixer
                 return null;
             }
 
-            private function inferPropertyType(Node\Stmt\PropertyProperty $prop): ?Node\Name
+            private function inferPropertyType(Node\PropertyItem $prop): Node\Name
             {
                 if ($prop->default !== null) {
                     if ($prop->default instanceof Node\Scalar\String_) {

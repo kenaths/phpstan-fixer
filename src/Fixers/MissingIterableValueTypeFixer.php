@@ -199,14 +199,15 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                     $docText = "/**\n";
                     if ($node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Stmt\Function_) {
                         foreach ($node->params as $param) {
-                        if ($param->var instanceof Node\Expr\Variable) {
-                            $paramName = $param->var->name;
-                            if ($specificParam === null || $paramName === $specificParam) {
-                                $type = $this->getParamType($param);
-                                if ($type === 'array') {
-                                    $type = 'array<mixed>';
+                            if ($param->var instanceof Node\Expr\Variable) {
+                                $paramName = $param->var->name;
+                                if ($specificParam === null || $paramName === $specificParam) {
+                                    $type = $this->getParamType($param);
+                                    if ($type === 'array') {
+                                        $type = 'array<mixed>';
+                                    }
+                                    $docText .= " * @param {$type} \${$paramName}\n";
                                 }
-                                $docText .= " * @param {$type} \${$paramName}\n";
                             }
                         }
                     }
@@ -215,23 +216,23 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                     // Update existing param docs
                     if ($node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Stmt\Function_) {
                         foreach ($node->params as $param) {
-                        if ($param->var instanceof Node\Expr\Variable) {
-                            $paramName = $param->var->name;
-                            if ($specificParam === null || $paramName === $specificParam) {
-                                $pattern = '/@param\s+array\s+\$' . preg_quote($paramName, '/') . '\b/';
-                                if (preg_match($pattern, $docText)) {
-                                    $docText = preg_replace(
-                                        $pattern,
-                                        '@param array<mixed> $' . $paramName,
-                                        $docText
-                                    );
-                                } else if (!preg_match('/@param\s+\S+\s+\$' . preg_quote($paramName, '/') . '\b/', $docText)) {
-                                    // Add missing param doc
-                                    $docText = str_replace('*/', "* @param array<mixed> \${$paramName}\n */", $docText);
+                            if ($param->var instanceof Node\Expr\Variable) {
+                                $paramName = $param->var->name;
+                                if ($specificParam === null || $paramName === $specificParam) {
+                                    $pattern = '/@param\s+array\s+\$' . preg_quote($paramName, '/') . '\b/';
+                                    if (preg_match($pattern, $docText)) {
+                                        $docText = preg_replace(
+                                            $pattern,
+                                            '@param array<mixed> $' . $paramName,
+                                            $docText
+                                        );
+                                    } else if (!preg_match('/@param\s+\S+\s+\$' . preg_quote($paramName, '/') . '\b/', $docText)) {
+                                        // Add missing param doc
+                                        $docText = str_replace('*/', "* @param array<mixed> \${$paramName}\n */", $docText);
+                                    }
                                 }
                             }
                         }
-                    }
                     }
                 }
 

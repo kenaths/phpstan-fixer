@@ -23,9 +23,9 @@ class ErrorParser
             $data = json_decode($phpstanOutput, true, 512, JSON_THROW_ON_ERROR);
             
             // Handle modern PHPStan JSON format
-            if (isset($data['files']) && is_array($data['files'])) {
+            if (isset($data['files'])) {
                 foreach ($data['files'] as $file => $fileData) {
-                    if (!isset($fileData['messages']) || !is_array($fileData['messages'])) {
+                    if (!is_array($fileData) || !isset($fileData['messages'])) {
                         continue;
                     }
                     
@@ -45,7 +45,7 @@ class ErrorParser
             }
             
             // Handle errors array (errors not tied to specific files)
-            if (isset($data['errors']) && is_array($data['errors'])) {
+            if (isset($data['errors'])) {
                 foreach ($data['errors'] as $error) {
                     if (is_string($error)) {
                         // Simple error string
@@ -54,12 +54,12 @@ class ErrorParser
                             line: 0,
                             message: $error
                         );
-                    } elseif (is_array($error) && isset($error['message']) && is_string($error['message'])) {
+                    } elseif (is_array($error) && isset($error['message'])) {
                         // Structured error
                         $errors[] = new Error(
                             file: isset($error['file']) && is_string($error['file']) ? $error['file'] : 'unknown',
                             line: isset($error['line']) && is_numeric($error['line']) ? (int) $error['line'] : 0,
-                            message: $error['message'],
+                            message: (string) $error['message'],
                             identifier: isset($error['identifier']) && is_string($error['identifier']) ? $error['identifier'] : null
                         );
                     }
