@@ -7,7 +7,7 @@ A powerful tool that automatically fixes PHPStan errors in your PHP code. Now wi
 - ✅ Automatically fixes common PHPStan errors
 - ✅ Full support for PHP 8.2, 8.3, and 8.4 features
 - ✅ Supports all PHPStan levels (0-9)
-- ✅ Creates backup files before making changes
+- ✅ Optional backup files before making changes
 - ✅ Dry-run mode to preview fixes
 - ✅ Extensible architecture for custom fixers
 - ✅ Modern PHP type system support (union, intersection, DNF types)
@@ -48,6 +48,18 @@ Use a custom PHPStan configuration:
 
 ```bash
 vendor/bin/phpstan-fix src/ --config=phpstan.neon
+```
+
+Create backup files before making changes:
+
+```bash
+vendor/bin/phpstan-fix src/ --backup
+```
+
+Increase memory limit for PHPStan:
+
+```bash
+vendor/bin/phpstan-fix src/ --memory-limit=256M
 ```
 
 ### Programmatic Usage
@@ -161,7 +173,7 @@ Common unfixable errors include:
 
 ## Safety
 
-- The tool creates `.bak` backup files before modifying any source files
+- Use `--backup` to create `.bak` backup files before modifying any source files
 - Use `--dry-run` to preview changes before applying them
 - Always review the changes and test your code after running the fixer
 - Use version control to track changes
@@ -288,8 +300,8 @@ vendor/bin/phpstan analyse --level=9
 # 2. Preview what can be fixed
 vendor/bin/phpstan-fix src/ --level=9 --dry-run
 
-# 3. Apply fixes
-vendor/bin/phpstan-fix src/ --level=9
+# 3. Apply fixes (with backup for safety)
+vendor/bin/phpstan-fix src/ --level=9 --backup
 
 # 4. Run PHPStan again to verify
 vendor/bin/phpstan analyse --level=9

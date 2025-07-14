@@ -12,7 +12,7 @@ class FixResult
     private array $fixedErrors = [];
     /** @var array<Error> */
     private array $unfixableErrors = [];
-    /** @var array<string, string> */
+    /** @var array<string, string|null> */
     private array $fixedFiles = [];
     /** @var array<string> */
     private array $errors = [];
@@ -28,7 +28,7 @@ class FixResult
         $this->unfixableErrors[] = $error;
     }
 
-    public function addFixedFile(string $file, string $backupFile): void
+    public function addFixedFile(string $file, ?string $backupFile): void
     {
         $this->fixedFiles[$file] = $backupFile;
     }
@@ -60,7 +60,7 @@ class FixResult
     }
 
     /**
-     * @return array<string, string>
+     * @return array<string, string|null>
      */
     public function getFixedFiles(): array
     {

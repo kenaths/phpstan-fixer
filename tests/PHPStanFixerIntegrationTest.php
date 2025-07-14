@@ -63,7 +63,7 @@ PHP;
         ]));
 
         $fixer = new PHPStanFixer($mockRunner);
-        $result = $fixer->fix([$testFile], 5);
+        $result = $fixer->fix([$testFile], 5, [], true);
 
         // At least 3 errors should be fixed
         $this->assertGreaterThanOrEqual(3, $result->getFixedCount());

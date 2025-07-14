@@ -60,6 +60,7 @@ abstract class AbstractFixer implements FixerInterface
     {
         $traverser = new NodeTraverser();
         $traverser->addVisitor($visitor);
+        /** @var array<\PhpParser\Node\Stmt> */
         return $traverser->traverse($stmts);
     }
 
@@ -120,9 +121,11 @@ abstract class AbstractFixer implements FixerInterface
             return false;
         }
 
-        foreach ($type->types as $subType) {
-            if ($this->isIntersectionType($subType)) {
-                return true;
+        if ($type instanceof Node\UnionType) {
+            foreach ($type->types as $subType) {
+                if ($this->isIntersectionType($subType)) {
+                    return true;
+                }
             }
         }
 
@@ -169,6 +172,10 @@ abstract class AbstractFixer implements FixerInterface
         if (is_string($type)) {
             $type = new Node\Name($type);
         }
+        if (!($type instanceof Node\Name || $type instanceof Node\Identifier)) {
+            // For complex types, we can't make them nullable directly
+            $type = new Node\Name('mixed');
+        }
         return new Node\NullableType($type);
     }
 
@@ -193,7 +200,7 @@ abstract class AbstractFixer implements FixerInterface
     {
         $constructors = $this->findNodes($stmts, Node\Stmt\ClassMethod::class);
         foreach ($constructors as $method) {
-            if ($method->name->name === '__construct') {
+            if ($method instanceof Node\Stmt\ClassMethod && $method->name->name === '__construct') {
                 foreach ($method->params as $param) {
                     if ($param->flags !== 0) {
                         return true;
@@ -253,7 +260,7 @@ abstract class AbstractFixer implements FixerInterface
     /**
      * Infer type from class constant
      */
-    private function inferTypeFromClassConstant(Node\Expr\ClassConstFetch $node): ?Node
+    private function inferTypeFromClassConstant(Node\Expr\ClassConstFetch $node): Node
     {
         if ($node->class instanceof Node\Name && $node->name instanceof Node\Identifier) {
             $className = $node->class->toString();

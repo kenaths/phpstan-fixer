@@ -48,7 +48,7 @@ class MissingParameterTypeFixer extends AbstractFixer
                 $this->targetLine = $targetLine;
             }
 
-            public function enterNode(Node $node)
+            public function enterNode(Node $node): ?Node
             {
                 if ($node instanceof Node\Stmt\ClassMethod 
                     && $node->name->toString() === $this->methodName

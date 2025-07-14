@@ -85,6 +85,7 @@ final readonly class Error
             'dnf_type_error' => '/DNF type .* is not allowed/',
             'property_hooks_error' => '/Property hook .* is not compatible/',
             'asymmetric_visibility_error' => '/Asymmetric visibility .* is not allowed/',
+            'method.deprecated' => '/Call to deprecated method/',
             
             // Constructor property promotion
             'constructor_promotion_error' => '/Constructor property promotion .* is not allowed/',

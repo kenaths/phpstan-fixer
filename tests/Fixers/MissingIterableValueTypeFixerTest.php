@@ -84,4 +84,19 @@ PHP;
         
         $this->assertStringContainsString('@param array<mixed> $items', $result);
     }
+
+    public function testFixesConstructorParameterMissingIterableType(): void
+    {
+        $code = <<<'PHP'
+<?php
+class GetFirstNotNull {
+    public function __construct(protected array $columns, protected Collection $components) {}
+}
+PHP;
+
+        $error = new Error('test.php', 3, 'Method GetFirstNotNull::__construct() has parameter $columns with no value type specified in iterable type array.');
+        $result = $this->fixer->fix($code, $error);
+        
+        $this->assertStringContainsString('@param array<mixed> $columns', $result);
+    }
 }

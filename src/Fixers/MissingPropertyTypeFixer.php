@@ -45,7 +45,7 @@ class MissingPropertyTypeFixer extends AbstractFixer
                 $this->targetLine = $targetLine;
             }
 
-            public function enterNode(Node $node)
+            public function enterNode(Node $node): ?Node
             {
                 if ($node instanceof Node\Stmt\Property
                     && abs($node->getLine() - $this->targetLine) < 3) {

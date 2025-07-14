@@ -167,3 +167,20 @@ class DataProcessor
 //         $this->readOnlyFromOutside = $value;
 //     }
 // }
+
+// 10. Asymmetric visibility (PHP 8.4)
+class AsymmetricExample {
+    public private(set) string $readWriteControlled;
+
+    public function __construct(string $value) {
+        $this->readWriteControlled = $value;
+    }
+}
+
+// 11. Property hooks with potential errors
+class HookedProperty {
+    public string $name {
+        get => 'Prefixed: ' . $this->name; // Missing backing read
+        set { /* Missing assignment */ }
+    }
+}

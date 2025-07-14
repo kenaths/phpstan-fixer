@@ -25,7 +25,7 @@ class MissingIterableValueTypeFixer extends AbstractFixer
     public function canFix(Error $error): bool
     {
         return (bool) preg_match(
-            '/(?:Property|Method|Function|Parameter).*has no value type specified in iterable type array/',
+            '/(?:Property|Method|Function|Parameter).*has (?:parameter \$\w+ with )?no value type specified in iterable type array/',
             $error->getMessage()
         );
     }
@@ -49,18 +49,31 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                 $memberName = $paramMatches[1];
             }
         }
+        
+        // Handle method parameter errors specifically
+        $paramName = null;
+        if (strpos($error->getMessage(), 'has parameter') !== false) {
+            preg_match('/Method ([^:]+)::(\w+)\(\) has parameter \$(\w+)/', $error->getMessage(), $methodMatches);
+            if (isset($methodMatches[1], $methodMatches[2], $methodMatches[3])) {
+                $className = $methodMatches[1];
+                $memberName = $methodMatches[2]; // method name
+                $paramName = $methodMatches[3]; // parameter name
+            }
+        }
 
-        $visitor = new class($memberName, $error->getLine()) extends NodeVisitorAbstract {
+        $visitor = new class($memberName, $error->getLine(), $paramName) extends NodeVisitorAbstract {
             private string $targetName;
             private int $targetLine;
+            private ?string $paramName;
 
-            public function __construct(string $targetName, int $targetLine)
+            public function __construct(string $targetName, int $targetLine, ?string $paramName = null)
             {
                 $this->targetName = $targetName;
                 $this->targetLine = $targetLine;
+                $this->paramName = $paramName;
             }
 
-            public function enterNode(Node $node)
+            public function enterNode(Node $node): ?Node
             {
                 // Handle property declarations
                 if ($node instanceof Node\Stmt\Property) {
@@ -73,8 +86,34 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                     }
                 }
 
-                // Handle method return types
+                // Handle method parameters first (takes priority over return types)
+                if ($node instanceof Node\Stmt\ClassMethod) {
+                    // If we have a specific parameter name, use it
+                    if ($this->paramName !== null) {
+                        if ($node->name->toString() === $this->targetName) {
+                            foreach ($node->params as $param) {
+                                if ($param->var instanceof Node\Expr\Variable 
+                                    && $param->var->name === $this->paramName) {
+                                    $this->addIterableParamDocToMethod($node, $this->paramName);
+                                    return $node;
+                                }
+                            }
+                        }
+                    } else {
+                        // Fallback to old behavior
+                        foreach ($node->params as $param) {
+                            if ($param->var instanceof Node\Expr\Variable 
+                                && $param->var->name === $this->targetName) {
+                                $this->addIterableParamDocToMethod($node, $this->targetName);
+                                return $node;
+                            }
+                        }
+                    }
+                }
+
+                // Handle method return types (only if we don't have a parameter name)
                 if ($node instanceof Node\Stmt\ClassMethod 
+                    && $this->paramName === null
                     && $node->name->toString() === $this->targetName
                     && abs($node->getLine() - $this->targetLine) < 10) {
                     $this->addIterableReturnTypeDoc($node);
@@ -86,17 +125,6 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                     && $node->name->toString() === $this->targetName) {
                     $this->addIterableParamTypeDoc($node);
                     return $node;
-                }
-
-                // Handle method parameters
-                if ($node instanceof Node\Stmt\ClassMethod) {
-                    foreach ($node->params as $param) {
-                        if ($param->var instanceof Node\Expr\Variable 
-                            && $param->var->name === $this->targetName) {
-                            $this->addIterableParamDocToMethod($node, $this->targetName);
-                            return $node;
-                        }
-                    }
                 }
 
                 return null;
@@ -169,7 +197,8 @@ class MissingIterableValueTypeFixer extends AbstractFixer
 
                 if (empty($docText)) {
                     $docText = "/**\n";
-                    foreach ($node->params as $param) {
+                    if ($node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Stmt\Function_) {
+                        foreach ($node->params as $param) {
                         if ($param->var instanceof Node\Expr\Variable) {
                             $paramName = $param->var->name;
                             if ($specificParam === null || $paramName === $specificParam) {
@@ -184,7 +213,8 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                     $docText .= " */";
                 } else {
                     // Update existing param docs
-                    foreach ($node->params as $param) {
+                    if ($node instanceof Node\Stmt\ClassMethod || $node instanceof Node\Stmt\Function_) {
+                        foreach ($node->params as $param) {
                         if ($param->var instanceof Node\Expr\Variable) {
                             $paramName = $param->var->name;
                             if ($specificParam === null || $paramName === $specificParam) {
@@ -201,6 +231,7 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                                 }
                             }
                         }
+                    }
                     }
                 }
 

@@ -23,8 +23,9 @@ class FixCommand extends Command
             ->addOption('level', 'l', InputOption::VALUE_REQUIRED, 'PHPStan level (0-9)', '0')
             ->addOption('config', 'c', InputOption::VALUE_REQUIRED, 'Path to PHPStan configuration file')
             ->addOption('dry-run', null, InputOption::VALUE_NONE, 'Show what would be fixed without making changes')
-            ->addOption('no-backup', null, InputOption::VALUE_NONE, 'Do not create backup files')
+            ->addOption('backup', null, InputOption::VALUE_NONE, 'Create backup files before making changes')
             ->addOption('autoload-file', 'a', InputOption::VALUE_REQUIRED, 'Path to autoload file')
+            ->addOption('memory-limit', null, InputOption::VALUE_REQUIRED, 'Memory limit for PHPStan execution')
             ->setHelp(<<<'HELP'
 The <info>%command.name%</info> command analyzes your PHP code with PHPStan and automatically fixes found errors.
 
@@ -38,6 +39,12 @@ To see what would be fixed without making changes:
 
 To use a custom PHPStan configuration:
 <info>php %command.full_name% src/ --config=phpstan.neon</info>
+
+To increase memory limit for PHPStan:
+<info>php %command.full_name% src/ --memory-limit=256M</info>
+
+To create backup files before making changes:
+<info>php %command.full_name% src/ --backup</info>
 HELP
             );
     }
@@ -58,8 +65,8 @@ HELP
         $configFile = $input->getOption('config');
         /** @var bool $dryRun */
         $dryRun = (bool) $input->getOption('dry-run');
-        /** @var bool $noBackup */
-        $noBackup = (bool) $input->getOption('no-backup');
+        /** @var bool $backup */
+        $backup = (bool) $input->getOption('backup');
         /** @var string|null $autoloadFile */
         $autoloadFile = $input->getOption('autoload-file');
 
@@ -91,10 +98,15 @@ HELP
             if ($autoloadFile) {
                 $options['autoload-file'] = $autoloadFile;
             }
+            
+            $memoryLimit = $input->getOption('memory-limit');
+            if ($memoryLimit) {
+                $options['memory-limit'] = $memoryLimit;
+            }
 
             if ($dryRun) {
                 $io->section('Running analysis...');
-                $result = $fixer->fix($paths, $level, $options);
+                $result = $fixer->fix($paths, $level, $options, $backup);
                 $this->displayDryRunResults($io, $result);
             } else {
                 $io->section('Fixing errors...');
@@ -102,12 +114,12 @@ HELP
                 $progressBar = $io->createProgressBar();
                 $progressBar->start();
                 
-                $result = $fixer->fix($paths, $level, $options);
+                $result = $fixer->fix($paths, $level, $options, $backup);
                 
                 $progressBar->finish();
                 $io->newLine(2);
                 
-                $this->displayResults($io, $result, $noBackup);
+                $this->displayResults($io, $result, $backup);
             }
 
             if ($result->hasErrors()) {
@@ -122,7 +134,7 @@ HELP
         }
     }
 
-    private function displayResults(SymfonyStyle $io, \PHPStanFixer\FixResult $result, bool $noBackup): void
+    private function displayResults(SymfonyStyle $io, \PHPStanFixer\FixResult $result, bool $backup): void
     {
         if ($result->getMessage()) {
             $io->success($result->getMessage());
@@ -145,7 +157,7 @@ HELP
                 ));
             }
 
-            if (!$noBackup) {
+            if ($backup) {
                 $io->newLine();
                 $io->section('Backup files created:');
                 foreach ($result->getFixedFiles() as $file => $backupFile) {

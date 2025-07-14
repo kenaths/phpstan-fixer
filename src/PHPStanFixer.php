@@ -38,8 +38,9 @@ class PHPStanFixer
      * 
      * @param array<string> $paths
      * @param array<string, mixed> $options
+     * @param bool $createBackup
      */
-    public function fix(array $paths, int $level, array $options = []): FixResult
+    public function fix(array $paths, int $level, array $options = [], bool $createBackup = false): FixResult
     {
         $result = new FixResult();
         
@@ -59,7 +60,7 @@ class PHPStanFixer
         
         // Fix errors file by file
         foreach ($errorsByFile as $file => $fileErrors) {
-            $this->fixFileErrors($file, $fileErrors, $result);
+            $this->fixFileErrors($file, $fileErrors, $result, $createBackup);
         }
         
         return $result;
@@ -87,6 +88,7 @@ class PHPStanFixer
         $this->fixerRegistry->register(new Fixers\ConstructorPromotionFixer());
         $this->fixerRegistry->register(new Fixers\MissingIterableValueTypeFixer());
         $this->fixerRegistry->register(new Fixers\PropertyHookFixer());
+        $this->fixerRegistry->register(new Fixers\AsymmetricVisibilityFixer());
     }
 
     /**
@@ -123,8 +125,16 @@ class PHPStanFixer
      * 
      * @param array<\PHPStanFixer\ValueObjects\Error> $errors
      */
-    private function fixFileErrors(string $file, array $errors, FixResult $result): void
+    private function fixFileErrors(string $file, array $errors, FixResult $result, bool $createBackup): void
     {
+        // Skip errors without valid file paths
+        if ($file === 'unknown') {
+            foreach ($errors as $error) {
+                $result->addError("PHPStan error without file association: {$error->message}");
+            }
+            return;
+        }
+        
         if (!$this->filesystem->exists($file)) {
             $result->addError("File not found: $file");
             return;
@@ -156,9 +166,13 @@ class PHPStanFixer
         }
         
         if ($fixed) {
-            // Create backup
-            $backupFile = $file . '.phpstan-fixer.bak';
-            file_put_contents($backupFile, $originalContent);
+            $backupFile = null;
+            
+            // Create backup only if requested
+            if ($createBackup) {
+                $backupFile = $file . '.phpstan-fixer.bak';
+                file_put_contents($backupFile, $originalContent);
+            }
             
             // Write fixed content
             file_put_contents($file, $content);
