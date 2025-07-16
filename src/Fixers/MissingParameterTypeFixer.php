@@ -20,7 +20,8 @@ class MissingParameterTypeFixer extends AbstractFixer
 
     public function canFix(Error $error): bool
     {
-        return (bool) preg_match('/Parameter .* has no type specified/', $error->getMessage());
+        return (bool) preg_match('/Parameter .* has no type specified/', $error->getMessage())
+            || (bool) preg_match('/Method .* has parameter \$.+ with no type specified/', $error->getMessage());
     }
 
     public function fix(string $content, Error $error): string
@@ -30,11 +31,14 @@ class MissingParameterTypeFixer extends AbstractFixer
             return $content;
         }
 
-        // Extract parameter info from error message
-        preg_match('/Parameter \$(\w+) of method (.*?)::(\w+)\(\) has no type specified/', $error->getMessage(), $matches);
-        $paramName = $matches[1] ?? '';
-        $className = $matches[2] ?? '';
-        $methodName = $matches[3] ?? '';
+        // Extract parameter info from error message (two possible formats)
+        if (preg_match('/Parameter \\$(\\w+) of method (.*?)::(\\w+)\\(\\) has no type specified/', $error->getMessage(), $m)) {
+            [$_, $paramName, $className, $methodName] = $m;
+        } elseif (preg_match('/Method (.*?)::(\\w+)\\(\\) has parameter \\$(\\w+) with no type specified/', $error->getMessage(), $m)) {
+            [$_, $className, $methodName, $paramName] = $m;
+        } else {
+            return $content; // pattern not matched
+        }
 
         $visitor = new class($methodName, $paramName, $error->getLine()) extends NodeVisitorAbstract {
             private string $methodName;
@@ -94,12 +98,36 @@ class MissingParameterTypeFixer extends AbstractFixer
                             return 'bool';
                         }
                         if ($name === 'null') {
-                            return '?mixed';
+                            // When default is null, try to infer from parameter name
+                            $paramName = strtolower($this->paramName);
+                            if (str_contains($paramName, 'name') || str_contains($paramName, 'title') || str_contains($paramName, 'content')) {
+                                return 'string|null';
+                            }
+                            if (str_contains($paramName, 'id') || str_contains($paramName, 'count') || str_contains($paramName, 'number')) {
+                                return 'int|null';
+                            }
+                            if (str_contains($paramName, 'array') || str_contains($paramName, 'list') || str_contains($paramName, 'options')) {
+                                return 'array|null';
+                            }
+                            return 'mixed';
                         }
                     }
                 }
 
-                // Default to mixed
+                // Try to infer from parameter name
+                $paramName = strtolower($this->paramName);
+                if (str_contains($paramName, 'name') || str_contains($paramName, 'title') || str_contains($paramName, 'content')) {
+                    return 'string';
+                }
+                if (str_contains($paramName, 'id') || str_contains($paramName, 'count') || str_contains($paramName, 'number')) {
+                    return 'int';
+                }
+                if (str_contains($paramName, 'array') || str_contains($paramName, 'list') || str_contains($paramName, 'options')) {
+                    return 'array';
+                }
+                if (str_contains($paramName, 'enabled') || str_contains($paramName, 'disabled') || str_contains($paramName, 'is_') || str_contains($paramName, 'has_')) {
+                    return 'bool';
+                }
                 return 'mixed';
             }
         };

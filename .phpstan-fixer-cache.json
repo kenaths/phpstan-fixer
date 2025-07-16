@@ -1,0 +1,57 @@
+{
+    "version": "1.0",
+    "cache": {
+        "Test\\ClassB::getData()": {
+            "type": {
+                "params": [],
+                "return": {
+                    "native": "mixed",
+                    "phpDoc": null
+                }
+            },
+            "timestamp": 1752669583,
+            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68779d8f109ff\/ClassB.php"
+        },
+        "Test\\ServiceA::$serviceB": {
+            "type": {
+                "phpDoc": "mixed",
+                "native": null
+            },
+            "timestamp": 1752669583,
+            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68779d8f0e247\/ServiceA.php"
+        },
+        "Test\\ServiceB::$serviceA": {
+            "type": {
+                "phpDoc": "mixed",
+                "native": null
+            },
+            "timestamp": 1752669583,
+            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68779d8f0e247\/ServiceB.php"
+        },
+        "Test\\DataProcessor::$model": {
+            "type": {
+                "phpDoc": "mixed",
+                "native": null
+            },
+            "timestamp": 1752669583,
+            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68779d8f0ff1d\/DataProcessor.php"
+        },
+        "Test\\ClassA::$data": {
+            "type": {
+                "phpDoc": "mixed",
+                "native": null
+            },
+            "timestamp": 1752669583,
+            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68779d8f109ff\/ClassA.php"
+        },
+        "Test\\ClassB::$classA": {
+            "type": {
+                "phpDoc": "mixed",
+                "native": null
+            },
+            "timestamp": 1752669583,
+            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68779d8f109ff\/ClassB.php"
+        }
+    },
+    "generated_at": "2025-07-16 12:39:43"
+}

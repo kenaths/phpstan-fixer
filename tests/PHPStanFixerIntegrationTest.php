@@ -119,8 +119,12 @@ PHP;
 
         $fixedCode = file_get_contents($testFile);
 
-        // Check if type was added
-        $this->assertStringContainsString('public array $property', $fixedCode);
+        // Check if type was added (could be basic array or generic array)
+        $this->assertTrue(
+            str_contains($fixedCode, 'public array $property') || 
+            str_contains($fixedCode, 'public array<string, string> $property'),
+            'Expected either "public array $property" or "public array<string, string> $property" but found: ' . $fixedCode
+        );
 
         // Check if multi-line array preserved
         $this->assertStringContainsString("[

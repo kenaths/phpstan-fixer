@@ -99,7 +99,7 @@ class ReadonlyPropertyFixer extends AbstractFixer
                     $node instanceof Node\Scalar\LNumber => new Node\Name('int'),
                     $node instanceof Node\Scalar\DNumber => new Node\Name('float'),
                     $node instanceof Node\Expr\Array_ => new Node\Name('array'),
-                    $node instanceof Node\Expr\ConstFetch && $node->name->toLowerString() === 'null' => new Node\Name('?mixed'),
+                    $node instanceof Node\Expr\ConstFetch && $node->name->toLowerString() === 'null' => new Node\Name('mixed'),
                     $node instanceof Node\Expr\ConstFetch && in_array($node->name->toLowerString(), ['true', 'false']) => new Node\Name('bool'),
                     default => new Node\Name('mixed'),
                 };

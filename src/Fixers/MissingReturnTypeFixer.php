@@ -12,7 +12,7 @@ use PHPStanFixer\ValueObjects\Error;
 /**
  * Fixes missing return type declarations with PHP 8.4 support
  */
-class MissingReturnTypeFixer extends AbstractFixer
+class MissingReturnTypeFixer extends CacheAwareFixer
 {
     /**
      * @return array<string>
@@ -34,8 +34,9 @@ class MissingReturnTypeFixer extends AbstractFixer
             return $content;
         }
 
-        // Extract method name from error message
+        // Extract class and method name from error message
         preg_match('/Method (.*?)::(\w+)\(\)/', $error->getMessage(), $matches);
+        $className = $matches[1] ?? '';
         $methodName = $matches[2] ?? '';
 
         $visitor = new class($methodName, $error->getLine()) extends NodeVisitorAbstract {
@@ -129,7 +130,7 @@ class MissingReturnTypeFixer extends AbstractFixer
 
                 // No types found, default to mixed
                 if (empty($types)) {
-                    return $hasNull ? '?mixed' : 'mixed';
+                    return 'mixed'; // mixed already includes null
                 }
 
                 // Single type
@@ -469,6 +470,19 @@ class MissingReturnTypeFixer extends AbstractFixer
                 }
                 $text = ': ' . $visitor->fix['type'];
                 $content = substr($content, 0, $insertPos) . $text . substr($content, $insertPos);
+                
+                // Report the discovered return type to cache
+                $this->reportMethodTypes($className, $methodName, [], $visitor->fix['type']);
+            }
+        }
+        
+        // Also report PHPDoc type if we have it
+        if ($visitor->docFix !== null && strpos($visitor->docFix['text'], '@return') !== false) {
+            preg_match('/@return\s+([^\s]+)/', $visitor->docFix['text'], $docMatches);
+            if (isset($docMatches[1])) {
+                $phpDocReturn = $docMatches[1];
+                $nativeReturn = $visitor->fix['type'] ?? null;
+                $this->reportMethodTypes($className, $methodName, [], $nativeReturn, $phpDocReturn);
             }
         }
         

@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace PHPStanFixer;
 
+use PHPStanFixer\Cache\TypeCache;
 use PHPStanFixer\Contracts\FixerInterface;
+use PHPStanFixer\Fixers\CacheAwareFixer;
 use PHPStanFixer\Fixers\Registry\FixerRegistry;
 use PHPStanFixer\Parser\ErrorParser;
 use PHPStanFixer\Runner\PHPStanRunner;
@@ -19,6 +21,7 @@ class PHPStanFixer
     private ErrorParser $errorParser;
     private FixerRegistry $fixerRegistry;
     private Filesystem $filesystem;
+    private ?TypeCache $typeCache = null;
 
     public function __construct(
         ?PHPStanRunner $phpstanRunner = null,
@@ -40,9 +43,15 @@ class PHPStanFixer
      * @param array<string, mixed> $options
      * @param bool $createBackup
      */
-    public function fix(array $paths, int $level, array $options = [], bool $createBackup = false): FixResult
+    public function fix(array $paths, int $level, array $options = [], bool $createBackup = false, bool $smartMode = false): FixResult
     {
         $result = new FixResult();
+        
+        // Initialize type cache for smart mode
+        if ($smartMode) {
+            $projectRoot = $this->detectProjectRoot($paths);
+            $this->typeCache = new TypeCache($projectRoot);
+        }
         
         // Run PHPStan analysis
         $phpstanOutput = $this->phpstanRunner->analyze($paths, $level, $options);
@@ -58,9 +67,54 @@ class PHPStanFixer
         // Group errors by file
         $errorsByFile = $this->groupErrorsByFile($errors);
         
-        // Fix errors file by file
-        foreach ($errorsByFile as $file => $fileErrors) {
-            $this->fixFileErrors($file, $fileErrors, $result, $createBackup);
+        if ($smartMode) {
+            // Multi-pass fixing with type cache
+            $pass = 1;
+            $maxPasses = 3;
+            $totalErrors = count($errors);
+            
+            while ($pass <= $maxPasses && !empty($errorsByFile)) {
+                $result->addMessage("Smart mode: Pass $pass of $maxPasses");
+                
+                // Fix errors file by file
+                foreach ($errorsByFile as $file => $fileErrors) {
+                    $this->fixFileErrors($file, $fileErrors, $result, $createBackup);
+                }
+                
+                // Save cache after each pass
+                if ($this->typeCache) {
+                    $this->typeCache->save();
+                }
+                
+                // Re-run PHPStan to check remaining errors
+                if ($pass < $maxPasses) {
+                    $phpstanOutput = $this->phpstanRunner->analyze($paths, $level, $options);
+                    $errors = $this->errorParser->parse($phpstanOutput);
+                    
+                    if (empty($errors)) {
+                        $result->addMessage("All errors fixed in pass $pass!");
+                        break;
+                    }
+                    
+                    $errorsByFile = $this->groupErrorsByFile($errors);
+                    $newTotalErrors = count($errors);
+                    
+                    // Stop if we're not making progress
+                    if ($newTotalErrors >= $totalErrors) {
+                        $result->addMessage("No further improvements possible after pass $pass");
+                        break;
+                    }
+                    
+                    $totalErrors = $newTotalErrors;
+                }
+                
+                $pass++;
+            }
+        } else {
+            // Single-pass fixing (normal mode)
+            foreach ($errorsByFile as $file => $fileErrors) {
+                $this->fixFileErrors($file, $fileErrors, $result, $createBackup);
+            }
         }
         
         return $result;
@@ -89,6 +143,7 @@ class PHPStanFixer
         $this->fixerRegistry->register(new Fixers\MissingIterableValueTypeFixer());
         $this->fixerRegistry->register(new Fixers\PropertyHookFixer());
         $this->fixerRegistry->register(new Fixers\AsymmetricVisibilityFixer());
+        $this->fixerRegistry->register(new Fixers\GenericTypeFixer($this->phpstanRunner));
     }
 
     /**
@@ -153,6 +208,12 @@ class PHPStanFixer
             }
             
             try {
+                // Set type cache and current file for cache-aware fixers
+                if ($fixer instanceof CacheAwareFixer && $this->typeCache) {
+                    $fixer->setTypeCache($this->typeCache);
+                    $fixer->setCurrentFile($file);
+                }
+                
                 $newContent = $fixer->fix($content, $error);
                 if ($newContent !== $content) {
                     $content = $newContent;
@@ -179,5 +240,36 @@ class PHPStanFixer
             
             $result->addFixedFile($file, $backupFile);
         }
+    }
+    
+    /**
+     * Detect project root from given paths
+     */
+    private function detectProjectRoot(array $paths): string
+    {
+        // Try to find composer.json or .git directory
+        foreach ($paths as $path) {
+            $currentPath = realpath($path);
+            if (!$currentPath) {
+                continue;
+            }
+            
+            // If it's a file, get its directory
+            if (is_file($currentPath)) {
+                $currentPath = dirname($currentPath);
+            }
+            
+            // Walk up the directory tree
+            while ($currentPath !== '/' && $currentPath !== '') {
+                if (file_exists($currentPath . '/composer.json') || 
+                    file_exists($currentPath . '/.git')) {
+                    return $currentPath;
+                }
+                $currentPath = dirname($currentPath);
+            }
+        }
+        
+        // Fallback to current working directory
+        return getcwd() ?: '.';
     }
 }
