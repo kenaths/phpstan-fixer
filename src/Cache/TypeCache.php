@@ -116,6 +116,7 @@ class TypeCache
         // This is a simplified implementation
         // In a real scenario, we'd need to use the autoloader or parse composer.json
         // For now, we'll store this information when types are discovered
+        $className = ltrim($className, '\\');
         return $this->fileTimestamps[$className] ?? '';
     }
 

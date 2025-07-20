@@ -26,6 +26,7 @@ class FixCommand extends Command
             ->addOption('backup', null, InputOption::VALUE_NONE, 'Create backup files before making changes')
             ->addOption('autoload-file', 'a', InputOption::VALUE_REQUIRED, 'Path to autoload file')
             ->addOption('memory-limit', null, InputOption::VALUE_REQUIRED, 'Memory limit for PHPStan execution')
+            ->addOption('smart', null, InputOption::VALUE_NONE, 'Enable smart mode with multi-pass analysis and type caching')
             ->setHelp(<<<'HELP'
 The <info>%command.name%</info> command analyzes your PHP code with PHPStan and automatically fixes found errors.
 
@@ -45,6 +46,9 @@ To increase memory limit for PHPStan:
 
 To create backup files before making changes:
 <info>php %command.full_name% src/ --backup</info>
+
+To enable smart mode with multi-pass analysis and type caching:
+<info>php %command.full_name% src/ --smart</info>
 HELP
             );
     }
@@ -67,6 +71,8 @@ HELP
         $dryRun = (bool) $input->getOption('dry-run');
         /** @var bool $backup */
         $backup = (bool) $input->getOption('backup');
+        /** @var bool $smartMode */
+        $smartMode = (bool) $input->getOption('smart');
         /** @var string|null $autoloadFile */
         $autoloadFile = $input->getOption('autoload-file');
 
@@ -76,11 +82,15 @@ HELP
         }
 
         $io->title('PHPStan Auto-Fixer');
-        $io->text([
+        $messages = [
             sprintf('Analyzing paths: %s', implode(', ', $paths)),
             sprintf('PHPStan level: %d', $level),
             $dryRun ? 'Mode: Dry run (no changes will be made)' : 'Mode: Fix errors',
-        ]);
+        ];
+        if ($smartMode) {
+            $messages[] = 'Smart mode: Enabled (multi-pass analysis with type caching)';
+        }
+        $io->text($messages);
 
         if ($configFile) {
             $io->text(sprintf('Config file: %s', (string) $configFile));
@@ -106,7 +116,7 @@ HELP
 
             if ($dryRun) {
                 $io->section('Running analysis...');
-                $result = $fixer->fix($paths, $level, $options, $backup);
+                $result = $fixer->fix($paths, $level, $options, $backup, $smartMode);
                 $this->displayDryRunResults($io, $result);
             } else {
                 $io->section('Fixing errors...');
@@ -114,7 +124,7 @@ HELP
                 $progressBar = $io->createProgressBar();
                 $progressBar->start();
                 
-                $result = $fixer->fix($paths, $level, $options, $backup);
+                $result = $fixer->fix($paths, $level, $options, $backup, $smartMode);
                 
                 $progressBar->finish();
                 $io->newLine(2);

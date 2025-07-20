@@ -7,9 +7,22 @@ namespace PHPStanFixer\Fixers;
 use PhpParser\Node;
 use PhpParser\NodeVisitorAbstract;
 use PHPStanFixer\ValueObjects\Error;
+use PHPStanFixer\Analyzers\SmartTypeAnalyzer;
+use PHPStanFixer\Cache\FlowCache;
 
-class MissingParameterTypeFixer extends AbstractFixer
+class MissingParameterTypeFixer extends CacheAwareFixer
 {
+    private SmartTypeAnalyzer $smartAnalyzer;
+    private FlowCache $flowCache;
+
+    public function __construct()
+    {
+        parent::__construct();
+        // We'll initialize these in the fix method when we have the project root
+        $this->flowCache = new FlowCache(getcwd()); // temporary, will be updated
+        $this->smartAnalyzer = new SmartTypeAnalyzer($this->typeCache, $this->flowCache);
+    }
+
     /**
      * @return array<string>
      */
@@ -31,6 +44,34 @@ class MissingParameterTypeFixer extends AbstractFixer
             return $content;
         }
 
+        // Update smart analyzer with current cache and file
+        if ($this->typeCache) {
+            // Get project root from current file path
+            $projectRoot = $this->currentFile ? dirname($this->currentFile) : getcwd();
+            while ($projectRoot !== '/' && !file_exists($projectRoot . '/composer.json')) {
+                $projectRoot = dirname($projectRoot);
+            }
+            
+            // Fallback to current working directory if no composer.json found
+            if ($projectRoot === '/' || !is_dir($projectRoot)) {
+                $projectRoot = getcwd();
+            }
+            
+            $this->flowCache = new FlowCache($projectRoot);
+            $this->smartAnalyzer = new SmartTypeAnalyzer($this->typeCache, $this->flowCache);
+        }
+        if ($this->currentFile) {
+            $this->smartAnalyzer->setCurrentFile($this->currentFile);
+        }
+
+        // Run smart analysis first
+        $this->smartAnalyzer->analyze($stmts);
+        
+        // Save flow data after analysis
+        if ($this->flowCache) {
+            $this->flowCache->save();
+        }
+
         // Extract parameter info from error message (two possible formats)
         if (preg_match('/Parameter \\$(\\w+) of method (.*?)::(\\w+)\\(\\) has no type specified/', $error->getMessage(), $m)) {
             [$_, $paramName, $className, $methodName] = $m;
@@ -40,18 +81,22 @@ class MissingParameterTypeFixer extends AbstractFixer
             return $content; // pattern not matched
         }
 
-        $visitor = new class($methodName, $paramName, $error->getLine()) extends NodeVisitorAbstract {
+        $visitor = new class($methodName, $paramName, $error->getLine(), $this->smartAnalyzer, $className) extends NodeVisitorAbstract {
             private string $methodName;
             private string $paramName;
             private int $targetLine;
+            private SmartTypeAnalyzer $smartAnalyzer;
+            private string $className;
 
             public ?array $fix = null;
 
-            public function __construct(string $methodName, string $paramName, int $targetLine)
+            public function __construct(string $methodName, string $paramName, int $targetLine, SmartTypeAnalyzer $smartAnalyzer, string $className)
             {
                 $this->methodName = $methodName;
                 $this->paramName = $paramName;
                 $this->targetLine = $targetLine;
+                $this->smartAnalyzer = $smartAnalyzer;
+                $this->className = $className;
             }
 
             public function enterNode(Node $node): ?Node
@@ -65,14 +110,58 @@ class MissingParameterTypeFixer extends AbstractFixer
                             && $param->var->name === $this->paramName
                             && $param->type === null) {
                             
-                            // Try to infer type from usage or default value
-                            $inferredType = $this->inferParameterType($param, $node);
+                            // Try smart analysis first – only accept informative types
+                            $smartType = $this->smartAnalyzer->getParameterType($this->className, $this->methodName, $this->paramName);
+                            if ($smartType && !in_array($smartType, ['mixed', 'null'], true)) {
+                                $inferredType = $this->simplifyClassName($smartType);
+                            } else {
+                                // Fallback to heuristic inference
+                                $inferredType = $this->inferParameterType($param, $node);
+                            }
+                            
                             $insertionPos = $param->var->getAttribute('startFilePos');
                             $this->fix = ['pos' => $insertionPos, 'text' => $inferredType . ' '];
                         }
                     }
                 }
                 
+                return null;
+            }
+
+            private function simplifyClassName(string $type): string
+            {
+                // Handle generic types (e.g., array<string> -> array)
+                if (str_contains($type, '<')) {
+                    $baseType = substr($type, 0, strpos($type, '<'));
+                    // For now, just return the base type. In the future, we could add PHPDoc comments
+                    return $this->simplifyNamespaceInType($baseType);
+                }
+                
+                return $this->simplifyNamespaceInType($type);
+            }
+            
+            private function simplifyNamespaceInType(string $type): string
+            {
+                // If the type contains a namespace, check if it's the same as the current class namespace
+                if (str_contains($type, '\\')) {
+                    $currentNamespace = $this->getCurrentNamespace();
+                    if ($currentNamespace) {
+                        $prefix = $currentNamespace . '\\';
+                        if (str_starts_with($type, $prefix)) {
+                            // Remove the namespace prefix if it's the same as current namespace
+                            return substr($type, strlen($prefix));
+                        }
+                    }
+                }
+                return $type;
+            }
+
+            private function getCurrentNamespace(): ?string
+            {
+                // Extract namespace from the current class name
+                if (str_contains($this->className, '\\')) {
+                    return substr($this->className, 0, strrpos($this->className, '\\'));
+                }
                 return null;
             }
 

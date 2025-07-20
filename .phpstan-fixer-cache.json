@@ -1,57 +1,57 @@
 {
     "version": "1.0",
     "cache": {
-        "Test\\ClassB::getData()": {
-            "type": {
-                "params": [],
-                "return": {
-                    "native": "mixed",
-                    "phpDoc": null
-                }
-            },
-            "timestamp": 1752669583,
-            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68779d8f109ff\/ClassB.php"
-        },
         "Test\\ServiceA::$serviceB": {
             "type": {
                 "phpDoc": "mixed",
                 "native": null
             },
-            "timestamp": 1752669583,
-            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68779d8f0e247\/ServiceA.php"
+            "timestamp": 1752730184,
+            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68788a48c49d6\/ServiceA.php"
         },
         "Test\\ServiceB::$serviceA": {
             "type": {
                 "phpDoc": "mixed",
                 "native": null
             },
-            "timestamp": 1752669583,
-            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68779d8f0e247\/ServiceB.php"
+            "timestamp": 1752730184,
+            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68788a48c49d6\/ServiceB.php"
         },
         "Test\\DataProcessor::$model": {
             "type": {
-                "phpDoc": "mixed",
+                "phpDoc": "DataModel",
                 "native": null
             },
-            "timestamp": 1752669583,
-            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68779d8f0ff1d\/DataProcessor.php"
+            "timestamp": 1752730184,
+            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68788a48cca8a\/DataProcessor.php"
         },
         "Test\\ClassA::$data": {
             "type": {
-                "phpDoc": "mixed",
+                "phpDoc": "array",
                 "native": null
             },
-            "timestamp": 1752669583,
-            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68779d8f109ff\/ClassA.php"
+            "timestamp": 1752730184,
+            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68788a48cebfc\/ClassA.php"
         },
         "Test\\ClassB::$classA": {
             "type": {
-                "phpDoc": "mixed",
+                "phpDoc": "ClassA",
                 "native": null
             },
-            "timestamp": 1752669583,
-            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68779d8f109ff\/ClassB.php"
+            "timestamp": 1752730184,
+            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68788a48cebfc\/ClassB.php"
+        },
+        "Test\\ClassB::getData()": {
+            "type": {
+                "params": [],
+                "return": {
+                    "native": "array",
+                    "phpDoc": null
+                }
+            },
+            "timestamp": 1752730184,
+            "file": "\/var\/folders\/3q\/0d68lt_s6mg99_h2h9vkwb980000gn\/T\/phpstan-fixer-smart-test-68788a48cebfc\/ClassB.php"
         }
     },
-    "generated_at": "2025-07-16 12:39:43"
+    "generated_at": "2025-07-17 05:29:44"
 }

@@ -8,12 +8,25 @@ use PhpParser\Node;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
 use PHPStanFixer\ValueObjects\Error;
+use PHPStanFixer\Analyzers\SmartTypeAnalyzer;
+use PHPStanFixer\Cache\FlowCache;
 
 /**
  * Fixes missing return type declarations with PHP 8.4 support
  */
 class MissingReturnTypeFixer extends CacheAwareFixer
 {
+    private SmartTypeAnalyzer $smartAnalyzer;
+    private FlowCache $flowCache;
+
+    public function __construct()
+    {
+        parent::__construct();
+        // We'll initialize these in the fix method when we have the project root
+        $this->flowCache = new FlowCache(getcwd()); // temporary, will be updated
+        $this->smartAnalyzer = new SmartTypeAnalyzer($this->typeCache, $this->flowCache);
+    }
+
     /**
      * @return array<string>
      */
@@ -34,22 +47,54 @@ class MissingReturnTypeFixer extends CacheAwareFixer
             return $content;
         }
 
+        // Update smart analyzer with current cache and file
+        if ($this->typeCache) {
+            // Get project root from current file path
+            $projectRoot = $this->currentFile ? dirname($this->currentFile) : getcwd();
+            while ($projectRoot !== '/' && !file_exists($projectRoot . '/composer.json')) {
+                $projectRoot = dirname($projectRoot);
+            }
+            
+            // Fallback to current working directory if no composer.json found
+            if ($projectRoot === '/' || !is_dir($projectRoot)) {
+                $projectRoot = getcwd();
+            }
+            
+            $this->flowCache = new FlowCache($projectRoot);
+            $this->smartAnalyzer = new SmartTypeAnalyzer($this->typeCache, $this->flowCache);
+        }
+        if ($this->currentFile) {
+            $this->smartAnalyzer->setCurrentFile($this->currentFile);
+        }
+
+        // Run smart analysis first
+        $this->smartAnalyzer->analyze($stmts);
+        
+        // Save flow data after analysis
+        if ($this->flowCache) {
+            $this->flowCache->save();
+        }
+
         // Extract class and method name from error message
         preg_match('/Method (.*?)::(\w+)\(\)/', $error->getMessage(), $matches);
         $className = $matches[1] ?? '';
         $methodName = $matches[2] ?? '';
 
-        $visitor = new class($methodName, $error->getLine()) extends NodeVisitorAbstract {
+        $visitor = new class($methodName, $error->getLine(), $this->smartAnalyzer, $className) extends NodeVisitorAbstract {
             private string $methodName;
             private int $targetLine;
+            private SmartTypeAnalyzer $smartAnalyzer;
+            private string $className;
 
             public ?array $fix = null;
             public ?array $docFix = null;
 
-            public function __construct(string $methodName, int $targetLine)
+            public function __construct(string $methodName, int $targetLine, SmartTypeAnalyzer $smartAnalyzer, string $className)
             {
                 $this->methodName = $methodName;
                 $this->targetLine = $targetLine;
+                $this->smartAnalyzer = $smartAnalyzer;
+                $this->className = $className;
             }
 
             public function enterNode(Node $node): ?Node
@@ -58,8 +103,14 @@ class MissingReturnTypeFixer extends CacheAwareFixer
                     && $node->name->toString() === $this->methodName
                     && $node->getLine() <= $this->targetLine) {
                     
-                    // Try to infer return type from return statements
-                    $inferredType = $this->inferReturnType($node);
+                    // Try smart analysis first
+                    $smartType = $this->smartAnalyzer->getReturnType($this->className, $this->methodName);
+                    if ($smartType) {
+                        $inferredType = $this->simplifyClassName($smartType);
+                    } else {
+                        // Fallback to traditional inference
+                        $inferredType = $this->inferReturnType($node);
+                    }
                     $arrayDetails = $this->analyzeArrayReturnType($node);
                     
                     if ($node->returnType === null) {
@@ -77,6 +128,43 @@ class MissingReturnTypeFixer extends CacheAwareFixer
                     }
                 }
                 
+                return null;
+            }
+
+            private function simplifyClassName(string $type): string
+            {
+                // Handle generic types (e.g., array<string> -> array)
+                if (str_contains($type, '<')) {
+                    $baseType = substr($type, 0, strpos($type, '<'));
+                    // For now, just return the base type. In the future, we could add PHPDoc comments
+                    return $this->simplifyNamespaceInType($baseType);
+                }
+                
+                return $this->simplifyNamespaceInType($type);
+            }
+            
+            private function simplifyNamespaceInType(string $type): string
+            {
+                // If the type contains a namespace, check if it's the same as the current class namespace
+                if (str_contains($type, '\\')) {
+                    $currentNamespace = $this->getCurrentNamespace();
+                    if ($currentNamespace) {
+                        $prefix = $currentNamespace . '\\';
+                        if (str_starts_with($type, $prefix)) {
+                            // Remove the namespace prefix if it's the same as current namespace
+                            return substr($type, strlen($prefix));
+                        }
+                    }
+                }
+                return $type;
+            }
+
+            private function getCurrentNamespace(): ?string
+            {
+                // Extract namespace from the current class name
+                if (str_contains($this->className, '\\')) {
+                    return substr($this->className, 0, strrpos($this->className, '\\'));
+                }
                 return null;
             }
 
@@ -465,9 +553,7 @@ class MissingReturnTypeFixer extends CacheAwareFixer
             $parenPos = strpos($content, ')', $start);
             if ($parenPos !== false) {
                 $insertPos = $parenPos + 1;
-                while (isset($content[$insertPos]) && ctype_space($content[$insertPos])) {
-                    $insertPos++;
-                }
+                // Don't skip whitespace - insert directly after the closing parenthesis
                 $text = ': ' . $visitor->fix['type'];
                 $content = substr($content, 0, $insertPos) . $text . substr($content, $insertPos);
                 

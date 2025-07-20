@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace PHPStanFixer\Analyzers;
 
 use PHPStanFixer\Cache\TypeCache;
+use PHPStanFixer\Cache\FlowCache;
 use PhpParser\Node;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
@@ -25,13 +26,16 @@ class SmartTypeAnalyzer
     private array $constructorParameters = [];
     private ?TypeCache $externalCache = null;
     private ?string $currentFile = null;
+    private ?SmartTypeVisitor $currentVisitor = null;
+    private ?FlowCache $flowCache = null;
 
     /**
      * Constructor to optionally set the external type cache
      */
-    public function __construct(?TypeCache $externalCache = null)
+    public function __construct(?TypeCache $externalCache = null, ?FlowCache $flowCache = null)
     {
         $this->externalCache = $externalCache;
+        $this->flowCache = $flowCache;
     }
 
     /**
@@ -40,6 +44,11 @@ class SmartTypeAnalyzer
     public function setCurrentFile(string $file): void
     {
         $this->currentFile = $file;
+    }
+
+    public function getFlowCache(): ?FlowCache
+    {
+        return $this->flowCache;
     }
 
     /**
@@ -51,6 +60,7 @@ class SmartTypeAnalyzer
     {
         $traverser = new NodeTraverser();
         $visitor = new SmartTypeVisitor($this);
+        $this->currentVisitor = $visitor;
         $traverser->addVisitor($visitor);
         $traverser->traverse($stmts);
     }
@@ -106,6 +116,12 @@ class SmartTypeAnalyzer
         }
 
         $type = $this->inferParameterType($className, $methodName, $paramName);
+        
+        // If traditional inference failed, try flow analysis
+        if (!$type && $this->flowCache && $this->externalCache) {
+            $type = $this->flowCache->inferParameterTypeFromFlow($className, $methodName, $paramName, $this->externalCache);
+        }
+        
         $this->typeCache[$key] = $type;
         
         return $type;
@@ -131,6 +147,31 @@ class SmartTypeAnalyzer
         }
 
         $type = $this->inferReturnType($className, $methodName);
+        
+        // If traditional inference failed, try flow analysis
+        if (!$type && $this->flowCache && $this->externalCache) {
+            // Look for property-to-return flows
+            $flows = $this->flowCache->getFlows('property_to_return');
+            foreach ($flows as $sourceKey => $targets) {
+                foreach ($targets as $target) {
+                    $targetKey = $target['target'];
+                    if ($targetKey === "{$className}::{$methodName}::return") {
+                        // Parse source: "ClassName::$propertyName" 
+                        if (preg_match('/^(.+)::\$(.+)$/', $sourceKey, $matches)) {
+                            $sourceClass = ltrim($matches[1], '\\');
+                            $sourceProperty = $matches[2];
+                            
+                            $propertyType = $this->externalCache->getPropertyType($sourceClass, $sourceProperty);
+                            if ($propertyType) {
+                                $type = $propertyType['phpDoc'] ?? $propertyType['native'] ?? null;
+                                break 2;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
         $this->typeCache[$key] = $type;
         
         return $type;
@@ -305,7 +346,22 @@ class SmartTypeAnalyzer
     private function inferNewType(Node\Expr\New_ $new): string
     {
         if ($new->class instanceof Node\Name) {
-            return $new->class->toString();
+            $className = $new->class->toString();
+            
+            // If it's already fully qualified (starts with \), return as-is
+            if (str_starts_with($className, '\\')) {
+                return ltrim($className, '\\');
+            }
+            
+            // Get current namespace from visitor
+            $namespace = $this->currentVisitor?->getCurrentNamespace();
+            
+            // If we have a namespace, prepend it
+            if ($namespace !== null) {
+                return $namespace . '\\' . $className;
+            }
+            
+            return $className;
         }
         return 'object';
     }
@@ -642,16 +698,34 @@ class SmartTypeVisitor extends NodeVisitorAbstract
     private SmartTypeAnalyzer $analyzer;
     private ?string $currentClass = null;
     private ?string $currentMethod = null;
+    private ?string $currentNamespace = null;
 
     public function __construct(SmartTypeAnalyzer $analyzer)
     {
         $this->analyzer = $analyzer;
     }
 
+    public function getCurrentNamespace(): ?string
+    {
+        return $this->currentNamespace;
+    }
+
     public function enterNode(Node $node): ?int
     {
-        if ($node instanceof Node\Stmt\Class_) {
-            $this->currentClass = $node->name ? $node->name->toString() : null;
+        if ($node instanceof Node\Stmt\Namespace_) {
+            $this->currentNamespace = $node->name ? $node->name->toString() : null;
+        } elseif ($node instanceof Node\Stmt\Class_) {
+            if ($node->name) {
+                $className = $node->name->toString();
+                // Build fully qualified class name
+                if ($this->currentNamespace) {
+                    $this->currentClass = $this->currentNamespace . '\\' . $className;
+                } else {
+                    $this->currentClass = $className;
+                }
+            } else {
+                $this->currentClass = null;
+            }
         } elseif ($node instanceof Node\Stmt\ClassMethod) {
             $this->currentMethod = $node->name->toString();
             
@@ -723,6 +797,23 @@ class SmartTypeVisitor extends NodeVisitorAbstract
                             $node->expr,
                             $this->currentMethod
                         );
+                        
+                        // Record flow for parameters -> properties
+                        if ($node->expr instanceof Node\Expr\Variable && 
+                            $this->currentMethod && 
+                            $this->currentClass) {
+                            
+                            $flowCache = $this->analyzer->getFlowCache();
+                            if ($flowCache) {
+                                $flowCache->recordParameterToPropertyFlow(
+                                    $this->currentClass,
+                                    $this->currentMethod,
+                                    $node->expr->name,
+                                    $objectType,
+                                    $targetProperty
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -734,6 +825,33 @@ class SmartTypeVisitor extends NodeVisitorAbstract
                     $node->name->toString(),
                     $node->args
                 );
+            }
+        } elseif ($node instanceof Node\Stmt\Return_ && $this->currentMethod && $this->currentClass) {
+            // Handle return statements for flow analysis
+            if ($node->expr instanceof Node\Expr\PropertyFetch &&
+                $node->expr->var instanceof Node\Expr\PropertyFetch &&
+                $node->expr->var->var instanceof Node\Expr\Variable &&
+                $node->expr->var->var->name === 'this' &&
+                $node->expr->var->name instanceof Node\Identifier &&
+                $node->expr->name instanceof Node\Identifier) {
+                
+                // This is a return $this->objectProperty->property; pattern
+                $objectProperty = $node->expr->var->name->toString();
+                $targetProperty = $node->expr->name->toString();
+                
+                // Get the type of the object property to determine target class
+                $objectType = $this->getObjectTypeFromConstructor($objectProperty);
+                if ($objectType) {
+                    $flowCache = $this->analyzer->getFlowCache();
+                    if ($flowCache) {
+                        $flowCache->recordPropertyToReturnFlow(
+                            $objectType,
+                            $targetProperty,
+                            $this->currentClass,
+                            $this->currentMethod
+                        );
+                    }
+                }
             }
         }
 
@@ -782,7 +900,17 @@ class SmartTypeVisitor extends NodeVisitorAbstract
     private function getObjectTypeFromConstructor(string $propertyName): ?string
     {
         if ($this->currentClass) {
-            return $this->analyzer->getConstructorParameterType($this->currentClass, $propertyName);
+            // First check constructor parameters
+            $constructorType = $this->analyzer->getConstructorParameterType($this->currentClass, $propertyName);
+            if ($constructorType) {
+                return $constructorType;
+            }
+            
+            // Then check property types (for cases like $this->model = new DataModel())
+            $propertyType = $this->analyzer->getPropertyType($this->currentClass, $propertyName);
+            if ($propertyType) {
+                return $propertyType;
+            }
         }
         return null;
     }

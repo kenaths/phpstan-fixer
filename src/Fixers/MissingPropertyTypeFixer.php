@@ -9,17 +9,21 @@ use PhpParser\NodeVisitorAbstract;
 use PHPStanFixer\ValueObjects\Error;
 use PHPStanFixer\Analyzers\ArrayTypeAnalyzer;
 use PHPStanFixer\Analyzers\SmartTypeAnalyzer;
+use PHPStanFixer\Cache\FlowCache;
 
 class MissingPropertyTypeFixer extends CacheAwareFixer
 {
     private ArrayTypeAnalyzer $arrayAnalyzer;
     private SmartTypeAnalyzer $smartAnalyzer;
+    private FlowCache $flowCache;
 
     public function __construct()
     {
         parent::__construct();
         $this->arrayAnalyzer = new ArrayTypeAnalyzer();
-        $this->smartAnalyzer = new SmartTypeAnalyzer($this->typeCache);
+        // We'll initialize these in the fix method when we have the project root
+        $this->flowCache = new FlowCache(getcwd()); // temporary, will be updated
+        $this->smartAnalyzer = new SmartTypeAnalyzer($this->typeCache, $this->flowCache);
     }
     /**
      * @return array<string>
@@ -43,7 +47,19 @@ class MissingPropertyTypeFixer extends CacheAwareFixer
 
         // Update smart analyzer with current cache and file
         if ($this->typeCache) {
-            $this->smartAnalyzer = new SmartTypeAnalyzer($this->typeCache);
+            // Get project root from current file path
+            $projectRoot = $this->currentFile ? dirname($this->currentFile) : getcwd();
+            while ($projectRoot !== '/' && !file_exists($projectRoot . '/composer.json')) {
+                $projectRoot = dirname($projectRoot);
+            }
+            
+            // Fallback to current working directory if no composer.json found
+            if ($projectRoot === '/' || !is_dir($projectRoot)) {
+                $projectRoot = getcwd();
+            }
+            
+            $this->flowCache = new FlowCache($projectRoot);
+            $this->smartAnalyzer = new SmartTypeAnalyzer($this->typeCache, $this->flowCache);
         }
         if ($this->currentFile) {
             $this->smartAnalyzer->setCurrentFile($this->currentFile);
@@ -51,6 +67,11 @@ class MissingPropertyTypeFixer extends CacheAwareFixer
 
         // Run smart analysis first
         $this->smartAnalyzer->analyze($stmts);
+        
+        // Save flow data after analysis
+        if ($this->flowCache) {
+            $this->flowCache->save();
+        }
 
         // Extract property info from error message
         preg_match('/Property (.*?)::\$(\w+) has no type specified/', $error->getMessage(), $matches);
@@ -87,7 +108,7 @@ class MissingPropertyTypeFixer extends CacheAwareFixer
                             // Try smart analysis first
                             $smartType = $this->smartAnalyzer->getPropertyType($this->className, $this->propertyName);
                             if ($smartType) {
-                                $inferredType = $smartType;
+                                $inferredType = $this->simplifyClassName($smartType);
                             } else {
                                 // Fallback to default inference
                                 $inferredType = $this->inferPropertyType($prop, $node);
@@ -99,6 +120,43 @@ class MissingPropertyTypeFixer extends CacheAwareFixer
                     }
                 }
                 
+                return null;
+            }
+
+            private function simplifyClassName(string $type): string
+            {
+                // Handle generic types (e.g., array<string> -> array)
+                if (str_contains($type, '<')) {
+                    $baseType = substr($type, 0, strpos($type, '<'));
+                    // For now, just return the base type. In the future, we could add PHPDoc comments
+                    return $this->simplifyNamespaceInType($baseType);
+                }
+                
+                return $this->simplifyNamespaceInType($type);
+            }
+            
+            private function simplifyNamespaceInType(string $type): string
+            {
+                // If the type contains a namespace, check if it's the same as the current class namespace
+                if (str_contains($type, '\\')) {
+                    $currentNamespace = $this->getCurrentNamespace();
+                    if ($currentNamespace) {
+                        $prefix = $currentNamespace . '\\';
+                        if (str_starts_with($type, $prefix)) {
+                            // Remove the namespace prefix if it's the same as current namespace
+                            return substr($type, strlen($prefix));
+                        }
+                    }
+                }
+                return $type;
+            }
+
+            private function getCurrentNamespace(): ?string
+            {
+                // Extract namespace from the current class name
+                if (str_contains($this->className, '\\')) {
+                    return substr($this->className, 0, strrpos($this->className, '\\'));
+                }
                 return null;
             }
 

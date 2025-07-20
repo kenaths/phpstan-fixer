@@ -91,9 +91,9 @@ class PHPStanFixer
                     $phpstanOutput = $this->phpstanRunner->analyze($paths, $level, $options);
                     $errors = $this->errorParser->parse($phpstanOutput);
                     
-                    if (empty($errors)) {
-                        $result->addMessage("All errors fixed in pass $pass!");
-                        break;
+                        if (empty($errors)) {
+                            $result->addMessage("All errors fixed in pass " . ($pass + 1) . "!");
+                            break;
                     }
                     
                     $errorsByFile = $this->groupErrorsByFile($errors);
@@ -144,6 +144,7 @@ class PHPStanFixer
         $this->fixerRegistry->register(new Fixers\PropertyHookFixer());
         $this->fixerRegistry->register(new Fixers\AsymmetricVisibilityFixer());
         $this->fixerRegistry->register(new Fixers\GenericTypeFixer($this->phpstanRunner));
+        $this->fixerRegistry->register(new Fixers\MissingGenericParameterFixer($this->phpstanRunner));
     }
 
     /**
@@ -269,7 +270,15 @@ class PHPStanFixer
             }
         }
         
-        // Fallback to current working directory
+        // Fallback to the first provided path's directory
+        if (!empty($paths)) {
+            $firstPath = realpath($paths[0]);
+            if ($firstPath) {
+                return is_dir($firstPath) ? $firstPath : dirname($firstPath);
+            }
+        }
+        
+        // Last resort: current working directory
         return getcwd() ?: '.';
     }
 }
