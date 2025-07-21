@@ -7,6 +7,7 @@ namespace PHPStanFixer\Fixers;
 use PhpParser\Node;
 use PhpParser\NodeVisitorAbstract;
 use PHPStanFixer\ValueObjects\Error;
+use PHPStanFixer\Utilities\RegexPatterns;
 
 class UndefinedVariableFixer extends AbstractFixer
 {
@@ -20,7 +21,8 @@ class UndefinedVariableFixer extends AbstractFixer
 
     public function canFix(Error $error): bool
     {
-        return (bool) preg_match('/Undefined variable/', $error->getMessage());
+        // Use optimized string check instead of regex for simple cases
+        return str_contains($error->getMessage(), 'Undefined variable');
     }
 
     public function fix(string $content, Error $error): string
@@ -31,7 +33,7 @@ class UndefinedVariableFixer extends AbstractFixer
         }
 
         // Extract variable name from error message
-        preg_match('/Undefined variable: \$(\w+)/', $error->getMessage(), $matches);
+        preg_match(RegexPatterns::EXTRACT_VARIABLE_NAME, $error->getMessage(), $matches);
         $varName = $matches[1] ?? '';
 
         $visitor = new class($varName, $error->getLine()) extends NodeVisitorAbstract {
@@ -105,7 +107,6 @@ class UndefinedVariableFixer extends AbstractFixer
             }
         };
 
-        $stmts = $this->traverseWithVisitor($stmts, $visitor);
-        return $this->printCode($stmts);
+        return $this->fixWithFormatPreservation($content, $visitor);
     }
 }

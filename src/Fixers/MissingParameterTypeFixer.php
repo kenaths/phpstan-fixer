@@ -9,11 +9,19 @@ use PhpParser\NodeVisitorAbstract;
 use PHPStanFixer\ValueObjects\Error;
 use PHPStanFixer\Analyzers\SmartTypeAnalyzer;
 use PHPStanFixer\Cache\FlowCache;
+use PHPStanFixer\Utilities\ProjectRootDetector;
+use PHPStanFixer\Utilities\TypeInferrer;
 
 class MissingParameterTypeFixer extends CacheAwareFixer
 {
     private SmartTypeAnalyzer $smartAnalyzer;
     private FlowCache $flowCache;
+    
+    // Pre-compiled regex patterns for performance
+    private const PATTERN_CAN_FIX_1 = '/Parameter .* has no type specified/';
+    private const PATTERN_CAN_FIX_2 = '/Method .* has parameter \$.+ with no type specified/';
+    private const PATTERN_EXTRACT_1 = '/Parameter \$(\w+) of method (.*?)::(\w+)\(\) has no type specified/';
+    private const PATTERN_EXTRACT_2 = '/Method (.*?)::(\w+)\(\) has parameter \$(\w+) with no type specified/';
 
     public function __construct()
     {
@@ -33,8 +41,9 @@ class MissingParameterTypeFixer extends CacheAwareFixer
 
     public function canFix(Error $error): bool
     {
-        return (bool) preg_match('/Parameter .* has no type specified/', $error->getMessage())
-            || (bool) preg_match('/Method .* has parameter \$.+ with no type specified/', $error->getMessage());
+        $message = $error->getMessage();
+        return (bool) preg_match(self::PATTERN_CAN_FIX_1, $message)
+            || (bool) preg_match(self::PATTERN_CAN_FIX_2, $message);
     }
 
     public function fix(string $content, Error $error): string
@@ -46,17 +55,7 @@ class MissingParameterTypeFixer extends CacheAwareFixer
 
         // Update smart analyzer with current cache and file
         if ($this->typeCache) {
-            // Get project root from current file path
-            $projectRoot = $this->currentFile ? dirname($this->currentFile) : getcwd();
-            while ($projectRoot !== '/' && !file_exists($projectRoot . '/composer.json')) {
-                $projectRoot = dirname($projectRoot);
-            }
-            
-            // Fallback to current working directory if no composer.json found
-            if ($projectRoot === '/' || !is_dir($projectRoot)) {
-                $projectRoot = getcwd();
-            }
-            
+            $projectRoot = ProjectRootDetector::detectFromFilePath($this->currentFile);
             $this->flowCache = new FlowCache($projectRoot);
             $this->smartAnalyzer = new SmartTypeAnalyzer($this->typeCache, $this->flowCache);
         }
@@ -73,9 +72,10 @@ class MissingParameterTypeFixer extends CacheAwareFixer
         }
 
         // Extract parameter info from error message (two possible formats)
-        if (preg_match('/Parameter \\$(\\w+) of method (.*?)::(\\w+)\\(\\) has no type specified/', $error->getMessage(), $m)) {
+        $message = $error->getMessage();
+        if (preg_match(self::PATTERN_EXTRACT_1, $message, $m)) {
             [$_, $paramName, $className, $methodName] = $m;
-        } elseif (preg_match('/Method (.*?)::(\\w+)\\(\\) has parameter \\$(\\w+) with no type specified/', $error->getMessage(), $m)) {
+        } elseif (preg_match(self::PATTERN_EXTRACT_2, $message, $m)) {
             [$_, $className, $methodName, $paramName] = $m;
         } else {
             return $content; // pattern not matched
@@ -115,8 +115,8 @@ class MissingParameterTypeFixer extends CacheAwareFixer
                             if ($smartType && !in_array($smartType, ['mixed', 'null'], true)) {
                                 $inferredType = $this->simplifyClassName($smartType);
                             } else {
-                                // Fallback to heuristic inference
-                                $inferredType = $this->inferParameterType($param, $node);
+                                // Fallback to enhanced heuristic inference
+                                $inferredType = $this->inferParameterTypeEnhanced($param, $node);
                             }
                             
                             $insertionPos = $param->var->getAttribute('startFilePos');
@@ -218,6 +218,34 @@ class MissingParameterTypeFixer extends CacheAwareFixer
                     return 'bool';
                 }
                 return 'mixed';
+            }
+            
+            private function inferParameterTypeEnhanced(Node\Param $param, Node\Stmt\ClassMethod $method): string
+            {
+                // Use the enhanced TypeInferrer for better type detection
+                $inferredType = TypeInferrer::inferParameterType($this->paramName, $this->className, $this->methodName);
+                
+                // Validate the confidence level and fall back to old method if confidence is low
+                $confidence = TypeInferrer::getInferenceConfidence($this->paramName, $inferredType);
+                
+                if ($confidence < 60) {
+                    // If confidence is low, try the old inference method as backup
+                    $oldType = $this->inferParameterType($param, $method);
+                    
+                    // If old method gives a more specific type than 'mixed', prefer it
+                    if ($oldType !== 'mixed' && $inferredType === 'mixed') {
+                        return $oldType;
+                    }
+                    
+                    // If both methods agree or new method is more specific, use new method
+                    if ($inferredType !== 'mixed') {
+                        return $inferredType;
+                    }
+                    
+                    return $oldType;
+                }
+                
+                return $inferredType;
             }
         };
 

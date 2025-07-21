@@ -8,6 +8,7 @@ use PhpParser\Node;
 use PhpParser\NodeVisitorAbstract;
 use PHPStanFixer\ValueObjects\Error;
 use PHPStanFixer\Runner\PHPStanRunner;
+use PHPStanFixer\Security\SecureFileOperations;
 
 /**
  * Fixes generic type errors by using PHPStan's feedback to discover correct types
@@ -15,6 +16,24 @@ use PHPStanFixer\Runner\PHPStanRunner;
 class GenericTypeFixer extends AbstractFixer
 {
     private ?PHPStanRunner $phpstanRunner = null;
+    
+    // Pre-compiled regex patterns for performance
+    private const PATTERN_CAN_FIX = '/(?:extends generic class|implements generic interface).*but does not specify its types/i';
+    private const PATTERN_EXTRACT_EXTENDS = '/Class ([^\\s]+) extends generic class ([^\\s]+) but does not specify its types: (.+)/';
+    private const PATTERN_EXTRACT_IMPLEMENTS = '/Class ([^\\s]+) implements generic interface ([^\\s]+) but does not specify its types: (.+)/';
+    private const PATTERN_TEMPLATE_EXTENDS = '/\/\\*\\*\\s*\\n\\s*\\*\\s*@template-extends\\s+[^<]+<[^>]+>\\s*\\n\\s*\\*\\//';
+    private const PATTERN_SHOULD_RETURN = '/should return ([^\\s]+(?:\\|[^\\s]+)*) but returns/';
+    private const PATTERN_CALLABLE_EXPECTS = '/expects callable\\(([^,\\s\\)]+),\\s*int\\)/';
+    private const PATTERN_EXPECTS_TYPE = '/expects ([^\\s,]+(?:\\|[^\\s,]+)*),/';
+    private const PATTERN_PARAMETER_EXPECTS = '/Parameter #\\d+ \\$\\w+ of method [^\\s]+ expects ([^\\s,]+(?:\\|[^\\s,]+)*)/';
+    
+    // Method pattern cache for type inference
+    public static array $methodPatterns = [
+        '/^get.*Column.*/' => 'Column',
+        '/.*Searchable.*/' => 'Column',
+        '/.*Sortable.*/' => 'Column', 
+        '/.*DefaultSort.*/' => 'Column',
+    ];
 
     public function __construct(?PHPStanRunner $phpstanRunner = null)
     {
@@ -36,10 +55,7 @@ class GenericTypeFixer extends AbstractFixer
 
     public function canFix(Error $error): bool
     {
-        return (bool) preg_match(
-            '/(?:extends generic class|implements generic interface).*but does not specify its types/i',
-            $error->getMessage()
-        );
+        return (bool) preg_match(self::PATTERN_CAN_FIX, $error->getMessage());
     }
 
     public function fix(string $content, Error $error): string
@@ -60,11 +76,7 @@ class GenericTypeFixer extends AbstractFixer
     private function extractClassInfo(string $errorMessage): ?array
     {
         // Pattern: "Class X extends generic class Y but does not specify its types: TKey, TValue"
-        if (preg_match(
-            '/Class ([^\\s]+) extends generic class ([^\\s]+) but does not specify its types: (.+)/',
-            $errorMessage,
-            $matches
-        )) {
+        if (preg_match(self::PATTERN_EXTRACT_EXTENDS, $errorMessage, $matches)) {
             return [
                 'class' => $matches[1],
                 'baseClass' => $matches[2],
@@ -73,11 +85,7 @@ class GenericTypeFixer extends AbstractFixer
         }
 
         // Pattern: "Class X implements generic interface Y but does not specify its types: TKey, TValue"
-        if (preg_match(
-            '/Class ([^\\s]+) implements generic interface ([^\\s]+) but does not specify its types: (.+)/',
-            $errorMessage,
-            $matches
-        )) {
+        if (preg_match(self::PATTERN_EXTRACT_IMPLEMENTS, $errorMessage, $matches)) {
             return [
                 'class' => $matches[1],
                 'baseClass' => $matches[2],
@@ -204,8 +212,7 @@ class GenericTypeFixer extends AbstractFixer
             }
         };
 
-        $stmts = $this->traverseWithVisitor($stmts, $visitor);
-        return $this->printCode($stmts);
+        return $this->fixWithFormatPreservation($content, $visitor);
     }
 
     /**
@@ -222,10 +229,8 @@ class GenericTypeFixer extends AbstractFixer
         $newDoc = "/**\n * @template-extends {$baseClass}<{$typeList}>\n */";
         
         // Find and replace the existing template-extends comment
-        $pattern = '/\/\*\*\s*\n\s*\*\s*@template-extends\s+[^<]+<[^>]+>\s*\n\s*\*\//';
-        
-        if (preg_match($pattern, $content)) {
-            return preg_replace($pattern, $newDoc, $content);
+        if (preg_match(self::PATTERN_TEMPLATE_EXTENDS, $content)) {
+            return preg_replace(self::PATTERN_TEMPLATE_EXTENDS, $newDoc, $content);
         }
         
         return $content;
@@ -246,13 +251,18 @@ class GenericTypeFixer extends AbstractFixer
             return null;
         }
 
-        // Write temporary file
-        $tempFile = tempnam(sys_get_temp_dir(), 'phpstan_generic_');
-        file_put_contents($tempFile, $content);
+        // Create secure temporary file
+        $tempFile = SecureFileOperations::createTempFile('phpstan_generic_', '.php');
 
         try {
+            SecureFileOperations::writeFile($tempFile, $content);
+            
             $output = $this->phpstanRunner->analyze([$tempFile], 5); // Use level 5 for analysis
             $data = json_decode($output, true);
+            
+            if (!is_array($data) || !isset($data['files'])) {
+                return null;
+            }
             
             // Handle both real temp file paths and mock 'temp_file' key
             $fileKey = isset($data['files'][$tempFile]) ? $tempFile : 'temp_file';
@@ -277,7 +287,7 @@ class GenericTypeFixer extends AbstractFixer
             
             return empty($errors) ? null : $errors;
         } finally {
-            unlink($tempFile);
+            SecureFileOperations::deleteFile($tempFile);
         }
     }
 
@@ -294,28 +304,28 @@ class GenericTypeFixer extends AbstractFixer
             $message = $error->getMessage();
             
             // Pattern: "should return X but returns Y"
-            if (preg_match('/should return ([^\\s]+(?:\\|[^\\s]+)*) but returns/', $message, $matches)) {
+            if (preg_match(self::PATTERN_SHOULD_RETURN, $message, $matches)) {
                 $expectedType = $matches[1];
                 $refinedTypes[] = $this->normalizeType($expectedType);
                 continue;
             }
             
             // Pattern: "expects callable(X, int): bool" - extract X as the value type
-            if (preg_match('/expects callable\\(([^,\\s\\)]+),\\s*int\\)/', $message, $matches)) {
+            if (preg_match(self::PATTERN_CALLABLE_EXPECTS, $message, $matches)) {
                 $expectedType = $matches[1];
                 $refinedTypes[] = $this->normalizeType($expectedType);
                 continue;
             }
             
             // Pattern: "expects X, Y given"
-            if (preg_match('/expects ([^\\s,]+(?:\\|[^\\s,]+)*),/', $message, $matches)) {
+            if (preg_match(self::PATTERN_EXPECTS_TYPE, $message, $matches)) {
                 $expectedType = $matches[1];
                 $refinedTypes[] = $this->normalizeType($expectedType);
                 continue;
             }
             
             // Pattern: "Parameter #1 $item of method expects X"
-            if (preg_match('/Parameter #\\d+ \\$\\w+ of method [^\\s]+ expects ([^\\s,]+(?:\\|[^\\s,]+)*)/', $message, $matches)) {
+            if (preg_match(self::PATTERN_PARAMETER_EXPECTS, $message, $matches)) {
                 $expectedType = $matches[1];
                 $refinedTypes[] = $this->normalizeType($expectedType);
                 continue;
@@ -496,35 +506,43 @@ class GenericTypeFixer extends AbstractFixer
             private function analyzeNodeForCollectionUsage(Node $node): array
             {
                 $types = [];
+                $nodesToProcess = [$node];
+                $processedCount = 0;
+                $maxNodes = 10000; // Prevent infinite loops and excessive processing
                 
-                // Look for $this->first(function($item) { ... }) patterns
-                if ($node instanceof Node\Stmt\Return_ && $node->expr instanceof Node\Expr\MethodCall) {
-                    $types = array_merge($types, $this->analyzeMethodCallForCollectionType($node->expr));
-                } elseif ($node instanceof Node\Stmt\Expression && $node->expr instanceof Node\Expr\Assign) {
-                    if ($node->expr->expr instanceof Node\Expr\MethodCall) {
-                        $types = array_merge($types, $this->analyzeMethodCallForCollectionType($node->expr->expr));
-                    }
-                } elseif ($node instanceof Node\Stmt\If_) {
-                    if ($node->cond instanceof Node\Expr\Assign && $node->cond->expr instanceof Node\Expr\MethodCall) {
-                        $types = array_merge($types, $this->analyzeMethodCallForCollectionType($node->cond->expr));
+                while (!empty($nodesToProcess) && $processedCount < $maxNodes) {
+                    $currentNode = array_pop($nodesToProcess);
+                    $processedCount++;
+                    
+                    // Analyze current node for collection patterns
+                    if ($currentNode instanceof Node\Stmt\Return_ && $currentNode->expr instanceof Node\Expr\MethodCall) {
+                        $types = array_merge($types, $this->analyzeMethodCallForCollectionType($currentNode->expr));
+                    } elseif ($currentNode instanceof Node\Stmt\Expression && $currentNode->expr instanceof Node\Expr\Assign) {
+                        if ($currentNode->expr->expr instanceof Node\Expr\MethodCall) {
+                            $types = array_merge($types, $this->analyzeMethodCallForCollectionType($currentNode->expr->expr));
+                        }
+                    } elseif ($currentNode instanceof Node\Stmt\If_) {
+                        if ($currentNode->cond instanceof Node\Expr\Assign && $currentNode->cond->expr instanceof Node\Expr\MethodCall) {
+                            $types = array_merge($types, $this->analyzeMethodCallForCollectionType($currentNode->cond->expr));
+                        }
+                        
+                        // Add if statements to processing stack
+                        $nodesToProcess = array_merge($nodesToProcess, $currentNode->stmts);
+                        if ($currentNode->else && $currentNode->else->stmts) {
+                            $nodesToProcess = array_merge($nodesToProcess, $currentNode->else->stmts);
+                        }
                     }
                     
-                    // Recurse into if statements
-                    $types = array_merge($types, $this->analyzeStatementsForCollectionUsage($node->stmts));
-                    if ($node->else && $node->else->stmts) {
-                        $types = array_merge($types, $this->analyzeStatementsForCollectionUsage($node->else->stmts));
-                    }
-                }
-                
-                // Recurse into child nodes
-                foreach ($node->getSubNodeNames() as $name) {
-                    $subNode = $node->$name;
-                    if ($subNode instanceof Node) {
-                        $types = array_merge($types, $this->analyzeNodeForCollectionUsage($subNode));
-                    } elseif (is_array($subNode)) {
-                        foreach ($subNode as $child) {
-                            if ($child instanceof Node) {
-                                $types = array_merge($types, $this->analyzeNodeForCollectionUsage($child));
+                    // Add child nodes to processing stack (iterative instead of recursive)
+                    foreach ($currentNode->getSubNodeNames() as $name) {
+                        $subNode = $currentNode->$name;
+                        if ($subNode instanceof Node) {
+                            $nodesToProcess[] = $subNode;
+                        } elseif (is_array($subNode)) {
+                            foreach ($subNode as $child) {
+                                if ($child instanceof Node) {
+                                    $nodesToProcess[] = $child;
+                                }
                             }
                         }
                     }
@@ -604,30 +622,38 @@ class GenericTypeFixer extends AbstractFixer
             private function findMethodCallsOnVariable(Node $node, string $varName): array
             {
                 $types = [];
+                $nodesToProcess = [$node];
+                $processedCount = 0;
+                $maxNodes = 5000; // Reasonable limit for variable method analysis
                 
-                if ($node instanceof Node\Expr\MethodCall 
-                    && $node->var instanceof Node\Expr\Variable 
-                    && $node->var->name === $varName
-                    && $node->name instanceof Node\Identifier) {
+                while (!empty($nodesToProcess) && $processedCount < $maxNodes) {
+                    $currentNode = array_pop($nodesToProcess);
+                    $processedCount++;
                     
-                    $methodName = $node->name->toString();
-                    
-                    // Infer type from method name patterns
-                    $type = $this->inferTypeFromMethodName($methodName);
-                    if ($type) {
-                        $types[] = $type;
+                    if ($currentNode instanceof Node\Expr\MethodCall 
+                        && $currentNode->var instanceof Node\Expr\Variable 
+                        && $currentNode->var->name === $varName
+                        && $currentNode->name instanceof Node\Identifier) {
+                        
+                        $methodName = $currentNode->name->toString();
+                        
+                        // Infer type from method name patterns
+                        $type = $this->inferTypeFromMethodName($methodName);
+                        if ($type) {
+                            $types[] = $type;
+                        }
                     }
-                }
-                
-                // Recurse into child nodes
-                foreach ($node->getSubNodeNames() as $name) {
-                    $subNode = $node->$name;
-                    if ($subNode instanceof Node) {
-                        $types = array_merge($types, $this->findMethodCallsOnVariable($subNode, $varName));
-                    } elseif (is_array($subNode)) {
-                        foreach ($subNode as $child) {
-                            if ($child instanceof Node) {
-                                $types = array_merge($types, $this->findMethodCallsOnVariable($child, $varName));
+                    
+                    // Add child nodes to processing stack (iterative instead of recursive)
+                    foreach ($currentNode->getSubNodeNames() as $name) {
+                        $subNode = $currentNode->$name;
+                        if ($subNode instanceof Node) {
+                            $nodesToProcess[] = $subNode;
+                        } elseif (is_array($subNode)) {
+                            foreach ($subNode as $child) {
+                                if ($child instanceof Node) {
+                                    $nodesToProcess[] = $child;
+                                }
                             }
                         }
                     }
@@ -638,17 +664,13 @@ class GenericTypeFixer extends AbstractFixer
 
             private function inferTypeFromMethodName(string $methodName): ?string
             {
-                // Common patterns that suggest the type
-                $patterns = [
-                    '/^get.*Column.*/' => 'Column',
-                    '/^is.*/' => null, // Boolean methods don't reveal type
-                    '/^has.*/' => null, // Boolean methods don't reveal type
-                    '/.*Searchable.*/' => 'Column', // Searchable suggests Column
-                    '/.*Sortable.*/' => 'Column', // Sortable suggests Column
-                    '/.*DefaultSort.*/' => 'Column', // DefaultSort suggests Column
-                ];
+                // Boolean methods don't reveal type - quick check first
+                if (str_starts_with($methodName, 'is') || str_starts_with($methodName, 'has')) {
+                    return null;
+                }
                 
-                foreach ($patterns as $pattern => $type) {
+                // Check cached patterns
+                foreach (GenericTypeFixer::$methodPatterns as $pattern => $type) {
                     if (preg_match($pattern, $methodName)) {
                         return $type;
                     }

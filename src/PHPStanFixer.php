@@ -10,6 +10,10 @@ use PHPStanFixer\Fixers\CacheAwareFixer;
 use PHPStanFixer\Fixers\Registry\FixerRegistry;
 use PHPStanFixer\Parser\ErrorParser;
 use PHPStanFixer\Runner\PHPStanRunner;
+use PHPStanFixer\Utilities\ProjectRootDetector;
+use PHPStanFixer\Utilities\AtomicFixApplicator;
+use PHPStanFixer\Safety\SafetyChecker;
+use PHPStanFixer\Validation\TypeConsistencyValidator;
 use Symfony\Component\Filesystem\Filesystem;
 
 /**
@@ -22,6 +26,9 @@ class PHPStanFixer
     private FixerRegistry $fixerRegistry;
     private Filesystem $filesystem;
     private ?TypeCache $typeCache = null;
+    private ?AtomicFixApplicator $atomicApplicator = null;
+    private SafetyChecker $safetyChecker;
+    private TypeConsistencyValidator $typeValidator;
 
     public function __construct(
         ?PHPStanRunner $phpstanRunner = null,
@@ -32,6 +39,8 @@ class PHPStanFixer
         $this->errorParser = $errorParser ?? new ErrorParser();
         $this->fixerRegistry = $fixerRegistry ?? new FixerRegistry();
         $this->filesystem = new Filesystem();
+        $this->safetyChecker = new SafetyChecker();
+        $this->typeValidator = new TypeConsistencyValidator();
         
         $this->registerDefaultFixers();
     }
@@ -42,15 +51,21 @@ class PHPStanFixer
      * @param array<string> $paths
      * @param array<string, mixed> $options
      * @param bool $createBackup
+     * @param bool $atomicMode Use atomic transactions for fix application
      */
-    public function fix(array $paths, int $level, array $options = [], bool $createBackup = false, bool $smartMode = false): FixResult
+    public function fix(array $paths, int $level, array $options = [], bool $createBackup = false, bool $smartMode = false, bool $atomicMode = true): FixResult
     {
         $result = new FixResult();
         
-        // Initialize type cache for smart mode
+        // Initialize type cache for smart mode and atomic applicator
+        $projectRoot = ProjectRootDetector::detectFromPaths($paths);
+        
         if ($smartMode) {
-            $projectRoot = $this->detectProjectRoot($paths);
             $this->typeCache = new TypeCache($projectRoot);
+        }
+        
+        if ($atomicMode) {
+            $this->atomicApplicator = new AtomicFixApplicator($projectRoot);
         }
         
         // Run PHPStan analysis
@@ -78,7 +93,7 @@ class PHPStanFixer
                 
                 // Fix errors file by file
                 foreach ($errorsByFile as $file => $fileErrors) {
-                    $this->fixFileErrors($file, $fileErrors, $result, $createBackup);
+                    $this->fixFileErrors($file, $fileErrors, $result, $createBackup, $atomicMode);
                 }
                 
                 // Save cache after each pass
@@ -91,9 +106,9 @@ class PHPStanFixer
                     $phpstanOutput = $this->phpstanRunner->analyze($paths, $level, $options);
                     $errors = $this->errorParser->parse($phpstanOutput);
                     
-                        if (empty($errors)) {
-                            $result->addMessage("All errors fixed in pass " . ($pass + 1) . "!");
-                            break;
+                    if (empty($errors)) {
+                        $result->addMessage("All errors fixed in pass " . ($pass + 1) . "!");
+                        break;
                     }
                     
                     $errorsByFile = $this->groupErrorsByFile($errors);
@@ -113,7 +128,7 @@ class PHPStanFixer
         } else {
             // Single-pass fixing (normal mode)
             foreach ($errorsByFile as $file => $fileErrors) {
-                $this->fixFileErrors($file, $fileErrors, $result, $createBackup);
+                $this->fixFileErrors($file, $fileErrors, $result, $createBackup, $atomicMode);
             }
         }
         
@@ -144,6 +159,7 @@ class PHPStanFixer
         $this->fixerRegistry->register(new Fixers\PropertyHookFixer());
         $this->fixerRegistry->register(new Fixers\AsymmetricVisibilityFixer());
         $this->fixerRegistry->register(new Fixers\GenericTypeFixer($this->phpstanRunner));
+        $this->fixerRegistry->register(new Fixers\TypeConsistencyFixer());
         $this->fixerRegistry->register(new Fixers\MissingGenericParameterFixer($this->phpstanRunner));
     }
 
@@ -181,7 +197,7 @@ class PHPStanFixer
      * 
      * @param array<\PHPStanFixer\ValueObjects\Error> $errors
      */
-    private function fixFileErrors(string $file, array $errors, FixResult $result, bool $createBackup): void
+    private function fixFileErrors(string $file, array $errors, FixResult $result, bool $createBackup, bool $atomicMode = true): void
     {
         // Skip errors without valid file paths
         if ($file === 'unknown') {
@@ -196,6 +212,101 @@ class PHPStanFixer
             return;
         }
         
+        if ($atomicMode && $this->atomicApplicator) {
+            $this->fixFileErrorsAtomic($file, $errors, $result, $createBackup);
+        } else {
+            $this->fixFileErrorsLegacy($file, $errors, $result, $createBackup);
+        }
+    }
+    
+    /**
+     * Fix errors atomically with transaction support
+     * 
+     * @param array<\PHPStanFixer\ValueObjects\Error> $errors
+     */
+    private function fixFileErrorsAtomic(string $file, array $errors, FixResult $result, bool $createBackup): void
+    {
+        try {
+            $this->atomicApplicator->beginTransaction();
+            $appliedFixes = [];
+            
+            foreach ($errors as $error) {
+                $fixer = $this->fixerRegistry->getFixerForError($error);
+                
+                if ($fixer === null) {
+                    $result->addUnfixableError($error);
+                    continue;
+                }
+                
+                try {
+                    // Set type cache and current file for cache-aware fixers
+                    if ($fixer instanceof CacheAwareFixer && $this->typeCache) {
+                        $fixer->setTypeCache($this->typeCache);
+                        $fixer->setCurrentFile($file);
+                    }
+                    
+                    // Apply fix atomically
+                    $wasFixed = $this->atomicApplicator->applyFix($file, $fixer, $error);
+                    
+                    if ($wasFixed) {
+                        $appliedFixes[] = $error;
+                        $result->addFixedError($error);
+                    }
+                    
+                } catch (\Exception $e) {
+                    $result->addError("Failed to fix error in $file: " . $e->getMessage());
+                    $result->addUnfixableError($error);
+                    // Continue with other fixes - atomic applicator will handle rollback if needed
+                }
+            }
+            
+            // Commit all fixes if any were applied
+            if (!empty($appliedFixes)) {
+                $commitedFixes = $this->atomicApplicator->commit();
+                
+                // Create legacy backup if requested (for compatibility)
+                if ($createBackup && !empty($commitedFixes)) {
+                    $backupFile = $file . '.phpstan-fixer.bak';
+                    // In atomic mode, individual backups are handled by AtomicFixApplicator
+                    // For legacy compatibility, create a simple backup
+                    if (file_exists($file)) {
+                        copy($file, $backupFile);
+                        $result->addFixedFile($file, $backupFile);
+                    }
+                } else if (!empty($commitedFixes)) {
+                    $result->addFixedFile($file, null);
+                }
+            } else {
+                // No fixes applied, rollback transaction
+                $this->atomicApplicator->rollback();
+            }
+            
+        } catch (\Exception $e) {
+            // Transaction failed, rollback everything
+            try {
+                if ($this->atomicApplicator->isTransactionActive()) {
+                    $this->atomicApplicator->rollback();
+                }
+            } catch (\Exception $rollbackError) {
+                $result->addError("Rollback failed for $file: " . $rollbackError->getMessage());
+            }
+            
+            $result->addError("Atomic fix failed for $file: " . $e->getMessage());
+            
+            // Mark all errors as unfixable
+            foreach ($errors as $error) {
+                $result->addUnfixableError($error);
+            }
+        }
+    }
+    
+    /**
+     * Fix errors using legacy (non-atomic) method
+     * 
+     * @param array<\PHPStanFixer\ValueObjects\Error> $errors
+     */
+    private function fixFileErrorsLegacy(string $file, array $errors, FixResult $result, bool $createBackup): void
+    {
         $originalContent = file_get_contents($file);
         $content = $originalContent;
         $fixed = false;
@@ -243,42 +354,4 @@ class PHPStanFixer
         }
     }
     
-    /**
-     * Detect project root from given paths
-     */
-    private function detectProjectRoot(array $paths): string
-    {
-        // Try to find composer.json or .git directory
-        foreach ($paths as $path) {
-            $currentPath = realpath($path);
-            if (!$currentPath) {
-                continue;
-            }
-            
-            // If it's a file, get its directory
-            if (is_file($currentPath)) {
-                $currentPath = dirname($currentPath);
-            }
-            
-            // Walk up the directory tree
-            while ($currentPath !== '/' && $currentPath !== '') {
-                if (file_exists($currentPath . '/composer.json') || 
-                    file_exists($currentPath . '/.git')) {
-                    return $currentPath;
-                }
-                $currentPath = dirname($currentPath);
-            }
-        }
-        
-        // Fallback to the first provided path's directory
-        if (!empty($paths)) {
-            $firstPath = realpath($paths[0]);
-            if ($firstPath) {
-                return is_dir($firstPath) ? $firstPath : dirname($firstPath);
-            }
-        }
-        
-        // Last resort: current working directory
-        return getcwd() ?: '.';
-    }
 }

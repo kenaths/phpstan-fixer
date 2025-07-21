@@ -9,6 +9,9 @@ use PhpParser\Node;
 use PhpParser\NodeVisitorAbstract;
 use PHPStanFixer\Runner\PHPStanRunner;
 use PHPStanFixer\ValueObjects\Error;
+use PHPStanFixer\Security\SecureFileOperations;
+use PHPStanFixer\Utilities\GenericTypeHandler;
+use PHPStanFixer\Utilities\IndentationHelper;
 
 /**
  * Fixes missing generic types for parameters of generic classes
@@ -16,6 +19,16 @@ use PHPStanFixer\ValueObjects\Error;
 class MissingGenericParameterFixer extends AbstractFixer
 {
     private ?PHPStanRunner $phpstanRunner = null;
+    
+    // Pre-compiled regex patterns for performance
+    private const PATTERN_CAN_FIX = '/has parameter \\$\\w+ with generic class .* but does not specify its types/';
+    private const PATTERN_EXTRACT_INFO = '/Method (.*?)::(\\w+)\\(\\) has parameter \\$(\\w+) with generic class (.*?) but does not specify its types: (.*)/';
+    private const PATTERN_SHOULD_RETURN = '/should return ([^\\s]+(?:\\|[^\\s]+)*) but returns/';
+    private const PATTERN_CALLABLE_GIVEN = '/expects callable\\(([^,\\s\\)]+),\\s*int\\):\\s*bool,\\s*callable\\(([^,\\s\\)]+),\\s*int\\):\\s*bool given/';
+    private const PATTERN_CALLABLE_EXPECTS = '/expects callable\\(([^,\\s\\)]+),\\s*int\\)/';
+    private const PATTERN_EXPECTS_TYPE = '/expects ([^\\s,]+(?:\\|[^\\s,]+)*),/';
+    private const PATTERN_PARAMETER_EXPECTS = '/Parameter #\\d+ \\$\\w+ of method [^\\s]+ expects ([^\\s,]+(?:\\|[^\\s,]+)*)/';
+    private const PATTERN_UPDATE_DOC = '/\\* @param %s<[^>]+> \\$%s/';
 
     public function __construct(?PHPStanRunner $phpstanRunner = null)
     {
@@ -33,13 +46,13 @@ class MissingGenericParameterFixer extends AbstractFixer
 
     public function canFix(Error $error): bool
     {
-        return (bool) preg_match('/has parameter \\$\\w+ with generic class .* but does not specify its types/', $error->getMessage());
+        return (bool) preg_match(self::PATTERN_CAN_FIX, $error->getMessage());
     }
 
     public function fix(string $content, Error $error): string
     {
         $matches = [];
-        if (!preg_match('/Method (.*?)::(\\w+)\\(\\) has parameter \\$(\\w+) with generic class (.*?) but does not specify its types: (.*)/', $error->getMessage(), $matches)) {
+        if (!preg_match(self::PATTERN_EXTRACT_INFO, $error->getMessage(), $matches)) {
             return $content;
         }
 
@@ -105,26 +118,44 @@ class MissingGenericParameterFixer extends AbstractFixer
             return $content;
         }
 
-        $visitor = new class($paramInfo, $types) extends NodeVisitorAbstract {
+        $visitor = new class($paramInfo, $types, $content) extends NodeVisitorAbstract {
             private array $paramInfo;
             private array $types;
+            private string $originalContent;
 
-            public function __construct(array $paramInfo, array $types)
+            public function __construct(array $paramInfo, array $types, string $originalContent)
             {
                 $this->paramInfo = $paramInfo;
                 $this->types = $types;
+                $this->originalContent = $originalContent;
             }
 
             public function enterNode(Node $node): ?Node
             {
                 if ($node instanceof Node\Stmt\ClassMethod && $node->name->toString() === $this->paramInfo['method']) {
+                    // Use GenericTypeHandler to get better type analysis
+                    $analysis = GenericTypeHandler::analyzeGenericType(
+                        $this->paramInfo['genericClass'], 
+                        $this->paramInfo['method'] . ' ' . $this->paramInfo['param']
+                    );
+                    
+                    // Use improved types if available, otherwise use provided types
+                    $finalTypes = $analysis['isGeneric'] ? 
+                        [$analysis['valueType']] : 
+                        $this->types;
+                    
                     $baseClass = $this->getShortClassName($this->paramInfo['genericClass']);
-                    $typeList = implode(', ', $this->types);
+                    $typeList = implode(', ', $finalTypes);
                     $paramName = $this->paramInfo['param'];
 
-                    $doc = "/**\n * @param {$baseClass}<{$typeList}> \${$paramName}\n */";
-
-                    $node->setDocComment(new Doc($doc));
+                    // Create PHPDoc with proper indentation
+                    $docContent = "@param {$baseClass}<{$typeList}> \${$paramName}";
+                    
+                    // Get base indentation for proper formatting
+                    $baseIndentation = IndentationHelper::getNodeIndentation($node, $this->originalContent);
+                    $formattedDoc = IndentationHelper::formatDocBlock($docContent, $baseIndentation);
+                    
+                    $node->setDocComment(new Doc($formattedDoc));
                 }
                 return null;
             }
@@ -136,8 +167,7 @@ class MissingGenericParameterFixer extends AbstractFixer
             }
         };
 
-        $stmts = $this->traverseWithVisitor($stmts, $visitor);
-        return $this->printCode($stmts);
+        return $this->fixWithFormatPreservation($content, $visitor);
     }
 
     /**
@@ -153,7 +183,7 @@ class MissingGenericParameterFixer extends AbstractFixer
         $newDocLine = " * @param {$baseClass}<{$typeList}> \${$paramName}";
 
         // Find and replace the existing @param line
-        $pattern = '/\\* @param ' . preg_quote($baseClass, '/') . '<[^>]+> \\$' . preg_quote($paramName, '/') . '/';
+        $pattern = sprintf(self::PATTERN_UPDATE_DOC, preg_quote($baseClass, '/'), preg_quote($paramName, '/'));
 
         return preg_replace($pattern, $newDocLine, $content, 1);
     }
@@ -169,12 +199,17 @@ class MissingGenericParameterFixer extends AbstractFixer
      */
     private function getPHPStanFeedback(string $content, string $filePath): ?array
     {
-        $tempFile = tempnam(sys_get_temp_dir(), 'phpstan_generic_');
-        file_put_contents($tempFile, $content);
+        $tempFile = SecureFileOperations::createTempFile('phpstan_generic_', '.php');
 
         try {
+            SecureFileOperations::writeFile($tempFile, $content);
+            
             $output = $this->phpstanRunner->analyze([$tempFile], 5);
             $data = json_decode($output, true);
+
+            if (!is_array($data) || !isset($data['files'])) {
+                return null;
+            }
 
             $fileKey = isset($data['files'][$tempFile]) ? $tempFile : (isset($data['files']['temp_file']) ? 'temp_file' : null);
 
@@ -198,7 +233,7 @@ class MissingGenericParameterFixer extends AbstractFixer
 
             return empty($errors) ? null : $errors;
         } finally {
-            unlink($tempFile);
+            SecureFileOperations::deleteFile($tempFile);
         }
     }
 
@@ -215,28 +250,37 @@ class MissingGenericParameterFixer extends AbstractFixer
             $message = $error->getMessage();
 
             // Pattern: "should return X but returns Y"
-            if (preg_match('/should return ([^\\s]+(?:\\|[^\\s]+)*) but returns/', $message, $matches)) {
+            if (preg_match(self::PATTERN_SHOULD_RETURN, $message, $matches)) {
                 $expectedType = $matches[1];
                 $refinedTypes[] = $this->normalizeType($expectedType);
                 continue;
             }
 
+            // Pattern: "expects callable(X, int): bool, callable(Y, int): bool given"
+            if (preg_match(self::PATTERN_CALLABLE_GIVEN, $message, $matches)) {
+                $expectedType = $matches[1];
+                $givenType = $matches[2];
+                // Use the given type as it's more specific than the expected mixed
+                $refinedTypes[] = $this->normalizeType($givenType);
+                continue;
+            }
+            
             // Pattern: "expects callable(X, int): bool"
-            if (preg_match('/expects callable\\(([^,\\s\\)]+),\\s*int\\)/', $message, $matches)) {
+            if (preg_match(self::PATTERN_CALLABLE_EXPECTS, $message, $matches)) {
                 $expectedType = $matches[1];
                 $refinedTypes[] = $this->normalizeType($expectedType);
                 continue;
             }
 
             // Pattern: "expects X, Y given"
-            if (preg_match('/expects ([^\\s,]+(?:\\|[^\\s,]+)*),/', $message, $matches)) {
+            if (preg_match(self::PATTERN_EXPECTS_TYPE, $message, $matches)) {
                 $expectedType = $matches[1];
                 $refinedTypes[] = $this->normalizeType($expectedType);
                 continue;
             }
 
             // Pattern: "Parameter #1 $item of method expects X"
-            if (preg_match('/Parameter #\\d+ \\$\\w+ of method [^\\s]+ expects ([^\\s,]+(?:\\|[^\\s,]+)*)/', $message, $matches)) {
+            if (preg_match(self::PATTERN_PARAMETER_EXPECTS, $message, $matches)) {
                 $expectedType = $matches[1];
                 $refinedTypes[] = $this->normalizeType($expectedType);
                 continue;

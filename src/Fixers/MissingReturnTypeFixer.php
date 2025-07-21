@@ -10,6 +10,8 @@ use PhpParser\NodeVisitorAbstract;
 use PHPStanFixer\ValueObjects\Error;
 use PHPStanFixer\Analyzers\SmartTypeAnalyzer;
 use PHPStanFixer\Cache\FlowCache;
+use PHPStanFixer\Utilities\ProjectRootDetector;
+use PHPStanFixer\Utilities\IndentationHelper;
 
 /**
  * Fixes missing return type declarations with PHP 8.4 support
@@ -49,17 +51,7 @@ class MissingReturnTypeFixer extends CacheAwareFixer
 
         // Update smart analyzer with current cache and file
         if ($this->typeCache) {
-            // Get project root from current file path
-            $projectRoot = $this->currentFile ? dirname($this->currentFile) : getcwd();
-            while ($projectRoot !== '/' && !file_exists($projectRoot . '/composer.json')) {
-                $projectRoot = dirname($projectRoot);
-            }
-            
-            // Fallback to current working directory if no composer.json found
-            if ($projectRoot === '/' || !is_dir($projectRoot)) {
-                $projectRoot = getcwd();
-            }
-            
+            $projectRoot = ProjectRootDetector::detectFromFilePath($this->currentFile);
             $this->flowCache = new FlowCache($projectRoot);
             $this->smartAnalyzer = new SmartTypeAnalyzer($this->typeCache, $this->flowCache);
         }

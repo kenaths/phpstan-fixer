@@ -53,6 +53,43 @@ abstract class AbstractFixer implements FixerInterface
     }
 
     /**
+     * Print code using formatting-preserving pretty printing
+     * @param array<\PhpParser\Node\Stmt> $newStmts
+     * @param array<\PhpParser\Node\Stmt> $oldStmts  
+     * @param array<mixed> $oldTokens
+     */
+    protected function printCodePreservingFormat(array $newStmts, array $oldStmts, array $oldTokens): string
+    {
+        return $this->printer->printFormatPreserving($newStmts, $oldStmts, $oldTokens);
+    }
+
+    /**
+     * Fix code with formatting preservation to avoid corruption
+     */
+    protected function fixWithFormatPreservation(string $content, NodeVisitor $visitor): string
+    {
+        $oldStmts = $this->parseCode($content);
+        if ($oldStmts === null) {
+            return $content;
+        }
+
+        // Store original tokens for format preservation
+        $oldTokens = $this->parser->getTokens();
+
+        // Clone AST for modification
+        $cloningVisitor = new NodeVisitor\CloningVisitor();
+        $cloneTraverser = new NodeTraverser();
+        $cloneTraverser->addVisitor($cloningVisitor);
+        $newStmts = $cloneTraverser->traverse($oldStmts);
+
+        // Apply the fix
+        $newStmts = $this->traverseWithVisitor($newStmts, $visitor);
+
+        // Use formatting-preserving pretty printing
+        return $this->printCodePreservingFormat($newStmts, $oldStmts, $oldTokens);
+    }
+
+    /**
      * @param array<\PhpParser\Node\Stmt> $stmts
      * @return array<\PhpParser\Node\Stmt>
      */

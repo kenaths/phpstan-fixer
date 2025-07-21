@@ -6,6 +6,8 @@ namespace PHPStanFixer\Analyzers;
 
 use PHPStanFixer\Cache\TypeCache;
 use PHPStanFixer\Cache\FlowCache;
+use PHPStanFixer\Utilities\ClassResolver;
+use PHPStanFixer\Utilities\ProjectRootDetector;
 use PhpParser\Node;
 use PhpParser\NodeTraverser;
 use PhpParser\NodeVisitorAbstract;
@@ -28,6 +30,17 @@ class SmartTypeAnalyzer
     private ?string $currentFile = null;
     private ?SmartTypeVisitor $currentVisitor = null;
     private ?FlowCache $flowCache = null;
+    private ?ClassResolver $classResolver = null;
+    
+    // Memory management settings
+    private const MAX_CACHE_ENTRIES = 10000;
+    private const MAX_CLASSES_PROCESSED = 1000;
+    private const MAX_PROPERTY_ASSIGNMENTS = 5000;
+    private const CLEANUP_THRESHOLD = 0.8; // Clean when 80% full
+    
+    // Memory usage tracking
+    private int $totalPropertyAssignments = 0;
+    private array $cacheAccessTimes = []; // For LRU tracking
 
     /**
      * Constructor to optionally set the external type cache
@@ -36,6 +49,12 @@ class SmartTypeAnalyzer
     {
         $this->externalCache = $externalCache;
         $this->flowCache = $flowCache;
+        
+        // Initialize ClassResolver with project root
+        if ($this->currentFile) {
+            $projectRoot = ProjectRootDetector::detectFromFilePath($this->currentFile);
+            $this->classResolver = new ClassResolver($projectRoot);
+        }
     }
 
     /**
@@ -44,6 +63,12 @@ class SmartTypeAnalyzer
     public function setCurrentFile(string $file): void
     {
         $this->currentFile = $file;
+        
+        // Initialize or update ClassResolver when file changes
+        if (!$this->classResolver) {
+            $projectRoot = ProjectRootDetector::detectFromFilePath($file);
+            $this->classResolver = new ClassResolver($projectRoot);
+        }
     }
 
     public function getFlowCache(): ?FlowCache
@@ -81,11 +106,20 @@ class SmartTypeAnalyzer
         $key = "{$className}::{$propertyName}";
         
         if (isset($this->typeCache[$key])) {
+            // Update access time for LRU
+            $this->cacheAccessTimes[$key] = time();
             return $this->typeCache[$key];
         }
 
         $type = $this->inferPropertyType($className, $propertyName);
+        
+        // Check cache size before adding
+        if (count($this->typeCache) >= self::MAX_CACHE_ENTRIES) {
+            $this->evictLeastRecentlyUsed();
+        }
+        
         $this->typeCache[$key] = $type;
+        $this->cacheAccessTimes[$key] = time();
         
         // Save to external cache if available
         if ($this->externalCache && $type !== null && $this->currentFile) {
@@ -193,11 +227,16 @@ class SmartTypeAnalyzer
      */
     public function registerPropertyAssignment(string $className, string $propertyName, Node $value, string $methodName): void
     {
+        // Check memory limits before adding new assignments
+        $this->enforceMemoryLimits();
+        
         $this->propertyAssignments[$className][$propertyName][] = [
             'value' => $value,
             'inferredType' => $this->inferTypeFromNode($value),
             'method' => $methodName,
         ];
+        
+        $this->totalPropertyAssignments++;
     }
 
     /**
@@ -636,7 +675,152 @@ class SmartTypeAnalyzer
             'methodParameters' => $this->methodParameters,
             'classProperties' => $this->classProperties,
             'crossClassPropertyAccess' => $this->crossClassPropertyAccess,
+            'memoryUsage' => $this->getMemoryUsage(),
         ];
+    }
+    
+    /**
+     * Get current memory usage statistics
+     */
+    public function getMemoryUsage(): array
+    {
+        return [
+            'processedClasses' => count($this->processedClasses),
+            'cachedTypes' => count($this->typeCache),
+            'totalPropertyAssignments' => $this->totalPropertyAssignments,
+            'classProperties' => array_sum(array_map('count', $this->classProperties)),
+            'methodParameters' => array_sum(array_map(function($methods) {
+                return array_sum(array_map('count', $methods));
+            }, $this->methodParameters)),
+            'memoryUsageBytes' => memory_get_usage(),
+            'peakMemoryUsageBytes' => memory_get_peak_usage(),
+        ];
+    }
+    
+    /**
+     * Enforce memory limits and clean up if necessary
+     */
+    private function enforceMemoryLimits(): void
+    {
+        // Check if we need cleanup
+        $needsCleanup = (
+            count($this->processedClasses) >= self::MAX_CLASSES_PROCESSED * self::CLEANUP_THRESHOLD ||
+            count($this->typeCache) >= self::MAX_CACHE_ENTRIES * self::CLEANUP_THRESHOLD ||
+            $this->totalPropertyAssignments >= self::MAX_PROPERTY_ASSIGNMENTS * self::CLEANUP_THRESHOLD
+        );
+        
+        if ($needsCleanup) {
+            $this->performMemoryCleanup();
+        }
+    }
+    
+    /**
+     * Perform memory cleanup when limits are approached
+     */
+    private function performMemoryCleanup(): void
+    {
+        // Clean up old property assignments (keep only recent ones)
+        if ($this->totalPropertyAssignments >= self::MAX_PROPERTY_ASSIGNMENTS * self::CLEANUP_THRESHOLD) {
+            $this->cleanupPropertyAssignments();
+        }
+        
+        // Clean up processed classes if too many
+        if (count($this->processedClasses) >= self::MAX_CLASSES_PROCESSED * self::CLEANUP_THRESHOLD) {
+            $this->cleanupProcessedClasses();
+        }
+        
+        // Evict old cache entries
+        if (count($this->typeCache) >= self::MAX_CACHE_ENTRIES * self::CLEANUP_THRESHOLD) {
+            $this->evictLeastRecentlyUsed();
+        }
+    }
+    
+    /**
+     * Clean up old property assignments to free memory
+     */
+    private function cleanupPropertyAssignments(): void
+    {
+        $cleanedCount = 0;
+        $maxToKeep = (int)(self::MAX_PROPERTY_ASSIGNMENTS * 0.6); // Keep 60% of max
+        
+        foreach ($this->propertyAssignments as $className => $properties) {
+            foreach ($properties as $propertyName => $assignments) {
+                if (count($assignments) > 10) { // If more than 10 assignments for a property
+                    // Keep only the most recent 5
+                    $this->propertyAssignments[$className][$propertyName] = array_slice($assignments, -5);
+                    $cleanedCount += count($assignments) - 5;
+                }
+            }
+        }
+        
+        $this->totalPropertyAssignments = max(0, $this->totalPropertyAssignments - $cleanedCount);
+    }
+    
+    /**
+     * Clean up old processed classes entries
+     */
+    private function cleanupProcessedClasses(): void
+    {
+        // Remove oldest 40% of processed classes
+        $toRemove = (int)(count($this->processedClasses) * 0.4);
+        $classNames = array_keys($this->processedClasses);
+        
+        for ($i = 0; $i < $toRemove && $i < count($classNames); $i++) {
+            unset($this->processedClasses[$classNames[$i]]);
+        }
+    }
+    
+    /**
+     * Evict least recently used cache entries
+     */
+    private function evictLeastRecentlyUsed(): void
+    {
+        if (empty($this->cacheAccessTimes)) {
+            // If no access times recorded, remove oldest 20% of cache
+            $toRemove = (int)(count($this->typeCache) * 0.2);
+            $keys = array_keys($this->typeCache);
+            
+            for ($i = 0; $i < $toRemove; $i++) {
+                unset($this->typeCache[$keys[$i]]);
+            }
+            return;
+        }
+        
+        // Sort by access time (oldest first)
+        asort($this->cacheAccessTimes);
+        
+        // Remove oldest 20% entries
+        $toRemove = (int)(count($this->typeCache) * 0.2);
+        $removed = 0;
+        
+        foreach ($this->cacheAccessTimes as $key => $accessTime) {
+            if ($removed >= $toRemove) {
+                break;
+            }
+            
+            unset($this->typeCache[$key]);
+            unset($this->cacheAccessTimes[$key]);
+            $removed++;
+        }
+    }
+    
+    /**
+     * Force cleanup of all internal caches
+     */
+    public function clearInternalCaches(): void
+    {
+        $this->typeCache = [];
+        $this->cacheAccessTimes = [];
+        $this->processedClasses = [];
+        $this->totalPropertyAssignments = 0;
+        
+        // Optionally clear data structures but keep recent ones
+        foreach ($this->propertyAssignments as $className => $properties) {
+            foreach ($properties as $propertyName => $assignments) {
+                // Keep only the most recent assignment for each property
+                $this->propertyAssignments[$className][$propertyName] = array_slice($assignments, -1);
+            }
+        }
     }
 
     /**
@@ -913,5 +1097,63 @@ class SmartTypeVisitor extends NodeVisitorAbstract
             }
         }
         return null;
+    }
+    
+    /**
+     * Validate if a class type is valid in the current project context
+     */
+    public function validateClassType(string $className): bool
+    {
+        if (!$this->classResolver) {
+            return true; // If no resolver, assume valid
+        }
+        
+        $className = ltrim($className, '\\');
+        
+        // Remove generic type parameters if present
+        if (str_contains($className, '<')) {
+            $className = substr($className, 0, strpos($className, '<'));
+        }
+        
+        // Check built-in PHP types
+        $builtinTypes = [
+            'array', 'string', 'int', 'float', 'bool', 'object', 'resource', 'null',
+            'mixed', 'void', 'never', 'true', 'false', 'callable', 'iterable',
+            'self', 'parent', 'static'
+        ];
+        
+        if (in_array(strtolower($className), $builtinTypes, true)) {
+            return true;
+        }
+        
+        // Check if it's a local class using ClassResolver
+        return $this->classResolver->isLocalClass($className);
+    }
+    
+    /**
+     * Resolve a class name to its fully qualified name
+     */
+    public function resolveClassName(string $className): string
+    {
+        if (!$this->classResolver) {
+            return $className;
+        }
+        
+        // Get current namespace from visitor
+        $namespace = $this->currentVisitor?->getCurrentNamespace();
+        
+        return $this->classResolver->resolveClassName($className, $namespace ?? '');
+    }
+    
+    /**
+     * Get alternative type suggestions for invalid classes
+     */
+    public function suggestAlternativeTypes(string $invalidClassName): array
+    {
+        if (!$this->classResolver) {
+            return [];
+        }
+        
+        return $this->classResolver->suggestAlternativeTypes($invalidClassName);
     }
 }

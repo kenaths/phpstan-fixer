@@ -118,7 +118,6 @@ class EnumFixer extends AbstractFixer
             }
         };
 
-        $stmts = $this->traverseWithVisitor($stmts, $visitor);
-        return $this->printCode($stmts);
+        return $this->fixWithFormatPreservation($content, $visitor);
     }
 }
