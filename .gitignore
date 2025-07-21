@@ -16,6 +16,7 @@ Thumbs.db
 .phpunit.result.cache
 /coverage/
 /.phpstan/
+/.phpstan.cache
 
 # Build artifacts
 /build/
@@ -41,6 +42,13 @@ Thumbs.db
 /.cache/
 /cache/
 /tmp/
+
+# PHPStan Fixer specific
+.phpstan-fixer-cache.json
+.phpstan-fixer-cache/
+.phpstan-fixer-backup/
+.phpstan-fixer-flow-cache.json
+.phpstan-fixer-flow-cache/
 
 # Documentation builds
 /docs/_build/
