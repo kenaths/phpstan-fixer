@@ -52,11 +52,50 @@ class NullCoalescingFixer extends AbstractFixer
                     }
                 }
                 
+                // Convert isset($var) ? $var : $fallback to $var ?? $fallback
+                if ($node instanceof Node\Expr\Ternary
+                    && $node->cond instanceof Node\Expr\Isset_
+                    && $node->if !== null
+                    && abs($node->getLine() - $this->targetLine) < 3) {
+                    
+                    $issetVar = $node->cond->vars[0] ?? null;
+                    if ($issetVar !== null && $this->nodesAreEqual($issetVar, $node->if)) {
+                        return new Node\Expr\BinaryOp\Coalesce($issetVar, $node->else);
+                    }
+                }
+                
                 return null;
+            }
+            
+            private function nodesAreEqual(Node $node1, Node $node2): bool
+            {
+                // Simple comparison - could be more sophisticated
+                if (get_class($node1) !== get_class($node2)) {
+                    return false;
+                }
+                
+                if ($node1 instanceof Node\Expr\Variable && $node2 instanceof Node\Expr\Variable) {
+                    return $node1->name === $node2->name;
+                }
+                
+                if ($node1 instanceof Node\Expr\ArrayDimFetch && $node2 instanceof Node\Expr\ArrayDimFetch) {
+                    return $this->nodesAreEqual($node1->var, $node2->var) && 
+                           $this->nodesAreEqual($node1->dim, $node2->dim);
+                }
+                
+                if ($node1 instanceof Node\Expr\PropertyFetch && $node2 instanceof Node\Expr\PropertyFetch) {
+                    return $this->nodesAreEqual($node1->var, $node2->var) && 
+                           $node1->name->toString() === $node2->name->toString();
+                }
+                
+                if ($node1 instanceof Node\Scalar\String_ && $node2 instanceof Node\Scalar\String_) {
+                    return $node1->value === $node2->value;
+                }
+                
+                return false;
             }
         };
 
-        $stmts = $this->traverseWithVisitor($stmts, $visitor);
-        return $this->printCode($stmts);
+        return $this->fixWithFormatPreservation($content, $visitor);
     }
 }

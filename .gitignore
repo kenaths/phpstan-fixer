@@ -16,6 +16,7 @@ Thumbs.db
 .phpunit.result.cache
 /coverage/
 /.phpstan/
+/.phpstan.cache
 
 # Build artifacts
 /build/
@@ -41,6 +42,14 @@ Thumbs.db
 /.cache/
 /cache/
 /tmp/
+
+# PHPStan Fixer specific cache and backup files
+# These are generated during fixer operation and should not be committed
+.phpstan-fixer-cache.json          # Main fixer cache
+.phpstan-fixer-cache/               # Cache directory
+.phpstan-fixer-backup/              # Backup files created before fixing
+.phpstan-fixer-flow-cache.json      # Smart mode flow cache
+.phpstan-fixer-flow-cache/          # Flow cache directory
 
 # Documentation builds
 /docs/_build/

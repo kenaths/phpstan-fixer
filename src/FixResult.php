@@ -17,6 +17,8 @@ class FixResult
     /** @var array<string> */
     private array $errors = [];
     private string $message = '';
+    /** @var array<string> */
+    private array $messages = [];
 
     public function addFixedError(Error $error): void
     {
@@ -41,6 +43,11 @@ class FixResult
     public function setMessage(string $message): void
     {
         $this->message = $message;
+    }
+
+    public function addMessage(string $message): void
+    {
+        $this->messages[] = $message;
     }
 
     /**
@@ -78,6 +85,14 @@ class FixResult
     public function getMessage(): string
     {
         return $this->message;
+    }
+
+    /**
+     * @return array<string>
+     */
+    public function getMessages(): array
+    {
+        return $this->messages;
     }
 
     public function hasErrors(): bool

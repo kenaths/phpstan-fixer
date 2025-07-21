@@ -57,10 +57,12 @@ final readonly class Error
         $patterns = [
             // Type-related errors
             'missing_return_type' => '/Method .* has no return type specified/',
-            'missing_param_type' => '/Parameter .* has no type specified/',
+            'missing_param_type' => '/Method .* has parameter .* with no type specified/',
             'missing_property_type' => '/Property .* has no type specified/',
             'incompatible_return_type' => '/Method .* should return .* but returns?/',
             'incompatible_param_type' => '/Parameter .* expects .* given/',
+            'property.typeMismatch' => '/Property .* does not accept/',
+            'missingType.iterableValue' => '/return type has no value type specified in iterable type/',
             
             // Variable-related errors
             'undefined_variable' => '/Undefined variable/',

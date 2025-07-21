@@ -45,6 +45,11 @@ class ErrorParser
             if (isset($data['errors'])) {
                 foreach ($data['errors'] as $error) {
                     if (is_string($error)) {
+                        // Skip ignored pattern warnings
+                        if ($this->isIgnoredPatternWarning($error)) {
+                            continue;
+                        }
+                        
                         // Simple error string
                         $errors[] = new Error(
                             file: 'unknown',
@@ -52,6 +57,11 @@ class ErrorParser
                             message: $error
                         );
                     } elseif (is_array($error)) {
+                        // Skip ignored pattern warnings
+                        if (isset($error['message']) && $this->isIgnoredPatternWarning($error['message'])) {
+                            continue;
+                        }
+                        
                         // Structured error
                         $errors[] = new Error(
                             file: isset($error['file']) ? (string) $error['file'] : 'unknown',
@@ -123,5 +133,26 @@ class ErrorParser
         }
         
         return null;
+    }
+    
+    /**
+     * Check if a message is a warning about ignored patterns
+     */
+    private function isIgnoredPatternWarning(string $message): bool
+    {
+        $ignoredPatternWarnings = [
+            '/^Ignored error pattern #.*# was not matched in reported errors\.?$/',
+            '/^Trait .* is used zero times and is not analysed$/',
+            '/^Unsafe usage of new static\(\)$/',
+            '/^Variable \$\w+ in empty\(\) always exists and is not falsy$/'
+        ];
+        
+        foreach ($ignoredPatternWarnings as $pattern) {
+            if (preg_match($pattern, $message)) {
+                return true;
+            }
+        }
+        
+        return false;
     }
 }

@@ -37,16 +37,16 @@ class DocBlockFixer extends AbstractFixer
         }
 
         // Common PHPDoc fixes
-        if (preg_match('/@param\s+(\w+)\s+\$(\w+)/', $lines[$targetLine], $matches)) {
-            // Fix parameter order: @param type $name
+        if (preg_match('/@param\s+\$(\w+)\s+(\w+)/', $lines[$targetLine], $matches)) {
+            // Fix parameter order: @param $name type -> @param type $name
             $lines[$targetLine] = preg_replace(
-                '/@param\s+(\w+)\s+\$(\w+)/',
-                '@param $1 $$2',
+                '/@param\s+\$(\w+)\s+(\w+)/',
+                '@param $2 $$1',
                 $lines[$targetLine]
             );
         }
 
-        if (preg_match('/@return\s+$/', $lines[$targetLine])) {
+        if (preg_match('/@return\s*$/', $lines[$targetLine])) {
             // Add return type
             $lines[$targetLine] = str_replace('@return', '@return mixed', $lines[$targetLine]);
         }
