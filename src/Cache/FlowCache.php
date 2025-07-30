@@ -174,6 +174,15 @@ class FlowCache
             if ($lockHandle === false) {
                 throw new \RuntimeException('Failed to acquire lock for flow cache file: ' . $this->cacheFile);
             }
+            
+            // Reload and merge flow data to handle concurrent writes
+            $this->reloadAndMergeFlows();
+            
+            // Regenerate JSON data with merged flows
+            $jsonData = json_encode($this->flows, JSON_PRETTY_PRINT);
+            if ($jsonData === false) {
+                throw new \RuntimeException('Failed to encode merged flow cache data as JSON');
+            }
         }
         
         try {
@@ -188,7 +197,7 @@ class FlowCache
             }
         } finally {
             // Release lock
-            if ($lockHandle !== null && $this->lockManager) {
+            if ($lockHandle !== null) {
                 $this->lockManager->releaseLock($this->cacheFile, $lockHandle);
             }
         }
@@ -231,9 +240,63 @@ class FlowCache
             $this->flows = [];
         } finally {
             // Release lock
-            if ($lockHandle !== null && $this->lockManager) {
+            if ($lockHandle !== null) {
                 $this->lockManager->releaseLock($this->cacheFile . '.read', $lockHandle);
             }
+        }
+    }
+    
+    /**
+     * Reload flows from disk and merge with current flows
+     */
+    private function reloadAndMergeFlows(): void
+    {
+        if (!file_exists($this->cacheFile)) {
+            return;
+        }
+        
+        try {
+            $content = SecureFileOperations::readFile($this->cacheFile);
+            $diskFlows = json_decode($content, true);
+            
+            if (json_last_error() !== JSON_ERROR_NONE || !$diskFlows || !is_array($diskFlows)) {
+                return;
+            }
+            
+            // Merge disk flows with current flows
+            foreach ($diskFlows as $flowType => $sourceTargets) {
+                if (!isset($this->flows[$flowType])) {
+                    $this->flows[$flowType] = $sourceTargets;
+                    continue;
+                }
+                
+                foreach ($sourceTargets as $sourceKey => $targets) {
+                    if (!isset($this->flows[$flowType][$sourceKey])) {
+                        $this->flows[$flowType][$sourceKey] = $targets;
+                    } else {
+                        // Merge targets, avoiding duplicates
+                        $existingTargets = $this->flows[$flowType][$sourceKey];
+                        $newTargets = $targets;
+                        
+                        foreach ($newTargets as $newTarget) {
+                            $isDuplicate = false;
+                            foreach ($existingTargets as $existingTarget) {
+                                if ($existingTarget['target'] === $newTarget['target']) {
+                                    $isDuplicate = true;
+                                    break;
+                                }
+                            }
+                            if (!$isDuplicate) {
+                                $existingTargets[] = $newTarget;
+                            }
+                        }
+                        
+                        $this->flows[$flowType][$sourceKey] = $existingTargets;
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            // If merging fails, continue with current flows
         }
     }
 

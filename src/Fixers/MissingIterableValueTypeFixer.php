@@ -26,6 +26,7 @@ use PHPStanFixer\Utilities\IndentationHelper;
 class MissingIterableValueTypeFixer extends AbstractFixer
 {
     private ArrayTypeAnalyzer $arrayAnalyzer;
+    private array $properties = [];
 
     public function __construct()
     {
@@ -48,6 +49,102 @@ class MissingIterableValueTypeFixer extends AbstractFixer
         );
     }
 
+    /**
+     * Collect class properties and their types from the parsed statements
+     * 
+     * @param array<Node> $stmts
+     */
+    private function collectProperties(array $stmts): void
+    {
+        $this->properties = [];
+        
+        foreach ($stmts as $stmt) {
+            if ($stmt instanceof Node\Stmt\Class_) {
+                $this->collectClassProperties($stmt);
+            } elseif ($stmt instanceof Node\Stmt\Namespace_) {
+                // Recurse into namespace
+                $this->collectProperties($stmt->stmts);
+            }
+        }
+    }
+    
+    /**
+     * Collect properties from a class
+     */
+    private function collectClassProperties(Node\Stmt\Class_ $class): void
+    {
+        foreach ($class->stmts as $stmt) {
+            if ($stmt instanceof Node\Stmt\Property) {
+                foreach ($stmt->props as $prop) {
+                    $propertyName = $prop->name->toString();
+                    $propertyType = $this->extractPropertyType($stmt);
+                    
+                    if ($propertyType !== null) {
+                        $this->properties[$propertyName] = $propertyType;
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Extract type from property declaration
+     */
+    private function extractPropertyType(Node\Stmt\Property $property): ?string
+    {
+        // Check PHPDoc @var annotation first
+        $docComment = $property->getDocComment();
+        if ($docComment !== null) {
+            $docText = $docComment->getText();
+            // Enhanced regex to properly capture generic types with commas and nested brackets
+            if (preg_match('/@var\s+(\S+(?:<.*>)?)/', $docText, $matches)) {
+                return trim($matches[1]);
+            }
+        }
+
+        // Fallback to typed properties (PHP 7.4+)
+        if ($property->type !== null) {
+            $type = $this->nodeTypeToString($property->type);
+            if ($type !== null) {
+                return $type;
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Convert a Node type to string representation
+     */
+    private function nodeTypeToString($type): ?string
+    {
+        if ($type instanceof Node\Name) {
+            return $type->toString();
+        }
+        
+        if ($type instanceof Node\Identifier) {
+            return $type->toString();
+        }
+        
+        if ($type instanceof Node\UnionType) {
+            $types = [];
+            foreach ($type->types as $unionType) {
+                $typeStr = $this->nodeTypeToString($unionType);
+                if ($typeStr !== null) {
+                    $types[] = $typeStr;
+                }
+            }
+            return implode('|', $types);
+        }
+        
+        if ($type instanceof Node\NullableType) {
+            $innerType = $this->nodeTypeToString($type->type);
+            return $innerType !== null ? "?{$innerType}" : null;
+        }
+        
+        return null;
+    }
+
     public function fix(string $content, Error $error): string
     {
         try {
@@ -60,6 +157,9 @@ class MissingIterableValueTypeFixer extends AbstractFixer
             if ($stmts === null) {
                 throw new \RuntimeException('Failed to parse PHP code');
             }
+            
+            // Collect class properties first
+            $this->collectProperties($stmts);
 
             // Extract information from error message with enhanced error handling
             if (!preg_match('/(?:Property|Method) ([^:]+)::\$?(\w+)/', $error->getMessage(), $matches)) {
@@ -67,10 +167,10 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                 if (!preg_match('/(?:Function|Parameter).*?(\w+)/', $error->getMessage(), $matches)) {
                     throw new \RuntimeException('Could not extract class/method information from error message: ' . $error->getMessage());
                 }
-                $matches = ['', '', $matches[1] ?? '']; // Normalize matches array
+                $matches = ['', '', $matches[1]]; // Normalize matches array
             }
-        $className = $matches[1] ?? '';
-        $memberName = $matches[2] ?? '';
+        $className = $matches[1];
+        $memberName = $matches[2];
 
         // Also check for parameter errors
         if (strpos($error->getMessage(), 'parameter') !== false) {
@@ -91,20 +191,22 @@ class MissingIterableValueTypeFixer extends AbstractFixer
             }
         }
 
-        $visitor = new class($memberName, $error->getLine(), $paramName, $this->arrayAnalyzer, $content) extends NodeVisitorAbstract {
+        $visitor = new class($memberName, $error->getLine(), $paramName, $this->arrayAnalyzer, $content, $this->properties) extends NodeVisitorAbstract {
             private string $targetName;
             private int $targetLine;
             private ?string $paramName;
             private ArrayTypeAnalyzer $arrayAnalyzer;
             private string $originalContent;
+            private array $properties;
 
-            public function __construct(string $targetName, int $targetLine, ?string $paramName, ArrayTypeAnalyzer $arrayAnalyzer, string $originalContent)
+            public function __construct(string $targetName, int $targetLine, ?string $paramName, ArrayTypeAnalyzer $arrayAnalyzer, string $originalContent, array $properties)
             {
                 $this->targetName = $targetName;
                 $this->targetLine = $targetLine;
                 $this->paramName = $paramName;
                 $this->arrayAnalyzer = $arrayAnalyzer;
                 $this->originalContent = $originalContent;
+                $this->properties = $properties;
             }
 
             public array $fixes = [];
@@ -285,10 +387,35 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                                         );
                                     } else if (!preg_match('/@param\s+\S+\s+\$' . preg_quote($paramName, '/') . '\b/', $docText)) {
                                         // Add missing param doc
+                                        $arrayType = 'array<mixed>'; // Default
+                                        
+                                        // Try to infer from property type
+                                        if (isset($this->properties[$paramName])) {
+                                            $propertyType = $this->properties[$paramName];
+                                            if (str_contains($propertyType, 'array<')) {
+                                                if (preg_match('/array<([^,]+),\s*([^>]+)>/', $propertyType, $matches)) {
+                                                    $keyType = trim($matches[1]);
+                                                    $valueType = trim($matches[2]);
+                                                    $arrayType = "array<{$keyType}, {$valueType}>";
+                                                } else if (preg_match('/array<([^>]+)>/', $propertyType, $matches)) {
+                                                    $valueType = trim($matches[1]);
+                                                    $arrayType = "array<{$valueType}>";
+                                                } else {
+                                                    $arrayType = $propertyType; // fallback
+                                                }
+                                            } else if (str_contains($propertyType, 'array')) {
+                                                $arrayType = $propertyType;
+                                            }
+                                        }
+
                                         $paramNode = $this->findParamNode($node, $paramName);
                                         if ($paramNode !== null) {
                                             $arrayTypes = $this->arrayAnalyzer->analyzeArrayType($paramNode, $paramName, $node);
-                                            $arrayType = $this->formatArrayType($arrayTypes);
+                                            $analyzedType = $this->formatArrayType($arrayTypes);
+                                            // Be smart, if analyzed type is not generic, use property type
+                                            if (str_contains($analyzedType, '<')) {
+                                                $arrayType = $analyzedType;
+                                            }
                                         } else {
                                             $arrayType = 'array<mixed>';
                                         }
@@ -312,12 +439,38 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                                 $paramName = $param->var->name;
                                 if ($specificParam === null || $paramName === $specificParam) {
                                     $type = $this->getParamType($param);
-                                    if ($type === 'array') {
+                                    if ($type === 'array' || $type === 'array<mixed>') {
+                                        // Try to infer from property type first
+                                        if (isset($this->properties[$paramName])) {
+                                            $propertyType = $this->properties[$paramName];
+                                            if (str_contains($propertyType, 'array<')) {
+                                                if (preg_match('/array<([^,]+),\s*([^>]+)>/', $propertyType, $matches)) {
+                                                    $keyType = trim($matches[1]);
+                                                    $valueType = trim($matches[2]);
+                                                    $type = "array<{$keyType}, {$valueType}>";
+                                                } else if (preg_match('/array<([^>]+)>/', $propertyType, $matches)) {
+                                                    $valueType = trim($matches[1]);
+                                                    $type = "array<{$valueType}>";
+                                                } else {
+                                                    $type = $propertyType; // fallback
+                                                }
+                                            } else if (str_contains($propertyType, 'array')) {
+                                                $type = $propertyType;
+                                            }
+                                        }
+                                        
                                         $paramNode = $this->findParamNode($node, $paramName);
                                         if ($paramNode !== null) {
                                             $arrayTypes = $this->arrayAnalyzer->analyzeArrayType($paramNode, $paramName, $node);
-                                            $type = $this->formatArrayType($arrayTypes);
-                                        } else {
+                                            $analyzedType = $this->formatArrayType($arrayTypes);
+                                            // Use analyzed type if it's more specific than generic array<mixed>
+                                            if (str_contains($analyzedType, '<') && $analyzedType !== 'array<mixed>') {
+                                                $type = $analyzedType;
+                                            }
+                                        }
+                                        
+                                        // Ensure we always have a generic type for arrays
+                                        if ($type === 'array') {
                                             $type = 'array<mixed>';
                                         }
                                     }
@@ -349,11 +502,19 @@ class MissingIterableValueTypeFixer extends AbstractFixer
                 }
 
                 if ($param->type instanceof Node\Name) {
-                    return $param->type->toString();
+                    $type = $param->type->toString();
+                    if ($type === 'array') {
+                        return 'array<mixed>';
+                    }
+                    return $type;
                 }
 
                 if ($param->type instanceof Node\Identifier) {
-                    return $param->type->toString();
+                    $type = $param->type->toString();
+                    if ($type === 'array') {
+                        return 'array<mixed>';
+                    }
+                    return $type;
                 }
 
                 return 'mixed';
@@ -540,7 +701,7 @@ class MissingIterableValueTypeFixer extends AbstractFixer
              * 
              * @param Node $node The node to find line start for
              * @return int The file position at the start of the line
-             * @throws RuntimeException If unable to calculate line start
+             * @throws \RuntimeException If unable to calculate line start
              */
             private function calculateLineStart(Node $node): int
             {

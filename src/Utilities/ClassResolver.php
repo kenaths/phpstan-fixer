@@ -9,7 +9,6 @@ namespace PHPStanFixer\Utilities;
  */
 class ClassResolver
 {
-    private array $autoloadMap = [];
     private array $classCache = [];
     private string $projectRoot;
     private array $psr4Namespaces = [];

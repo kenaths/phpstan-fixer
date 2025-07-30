@@ -83,6 +83,7 @@ abstract class AbstractFixer implements FixerInterface
         $newStmts = $cloneTraverser->traverse($oldStmts);
 
         // Apply the fix
+        /** @var array<\PhpParser\Node\Stmt> $newStmts */
         $newStmts = $this->traverseWithVisitor($newStmts, $visitor);
 
         // Use formatting-preserving pretty printing
@@ -90,14 +91,14 @@ abstract class AbstractFixer implements FixerInterface
     }
 
     /**
-     * @param array<\PhpParser\Node\Stmt> $stmts
-     * @return array<\PhpParser\Node\Stmt>
+     * @param array<\PhpParser\Node> $stmts
+     * @return array<\PhpParser\Node>
      */
     protected function traverseWithVisitor(array $stmts, NodeVisitor $visitor): array
     {
         $traverser = new NodeTraverser();
         $traverser->addVisitor($visitor);
-        /** @var array<\PhpParser\Node\Stmt> */
+        /** @var array<\PhpParser\Node> */
         return $traverser->traverse($stmts);
     }
 

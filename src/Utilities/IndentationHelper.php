@@ -38,8 +38,8 @@ class IndentationHelper
      * @param Node $node The AST node to get indentation for
      * @param string $originalContent The original source code
      * @return string The indentation string (spaces or tabs)
-     * @throws InvalidArgumentException If inputs are invalid
-     * @throws RuntimeException If unable to determine indentation
+     * @throws \InvalidArgumentException If inputs are invalid
+     * @throws \RuntimeException If unable to determine indentation
      */
     public static function getNodeIndentation(Node $node, string $originalContent): string
     {
@@ -114,7 +114,7 @@ class IndentationHelper
      * @param string $content The PHPDoc content to format
      * @param string $baseIndentation The base indentation to use
      * @return string The formatted PHPDoc block
-     * @throws InvalidArgumentException If content is empty
+     * @throws \InvalidArgumentException If content is empty
      */
     public static function formatDocBlock(string $content, string $baseIndentation): string
     {
@@ -209,12 +209,12 @@ class IndentationHelper
     {
         if ($indentationType === "\t") {
             // Convert spaces to tabs
-            return preg_replace('/^(    )+/m', function($matches) {
+            return preg_replace_callback('/^(    )+/m', function($matches) {
                 return str_repeat("\t", strlen($matches[0]) / 4);
             }, $content);
         } else {
             // Convert tabs to spaces
-            return preg_replace('/^\t+/m', function($matches) use ($indentationType) {
+            return preg_replace_callback('/^\t+/m', function($matches) use ($indentationType) {
                 return str_repeat($indentationType, strlen($matches[0]));
             }, $content);
         }

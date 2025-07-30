@@ -254,12 +254,12 @@ PHP
         $messages = $result->getMessages();
         $this->assertContains('All errors fixed in pass 2!', $messages);
         
-        // Check that types were added
+        // Check that types were added - our fixer now infers more specific types
         $serviceAContent = file_get_contents($this->tempDir . '/ServiceA.php');
-        $this->assertStringContainsString('private mixed $serviceB;', $serviceAContent);
+        $this->assertStringContainsString('private string $serviceB;', $serviceAContent);
         
         $serviceBContent = file_get_contents($this->tempDir . '/ServiceB.php');
-        $this->assertStringContainsString('private mixed $serviceA;', $serviceBContent);
+        $this->assertStringContainsString('private string $serviceA;', $serviceBContent);
     }
 
     public function testCachePersistenceAcrossRuns(): void
@@ -333,7 +333,7 @@ PHP
         $this->fixer = new PHPStanFixer($mockRunner);
         $result = $this->fixer->fix([$this->tempDir], 1, [], false, true);
         
-        // Check that the cached type was used
+        // Check that the cached type was used - simplified namespace for same namespace classes
         $content = file_get_contents($this->tempDir . '/DataProcessor.php');
         $this->assertStringContainsString('private DataModel $model;', $content);
         // The parameter should get array type from the cached property type

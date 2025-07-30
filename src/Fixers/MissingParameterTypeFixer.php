@@ -14,6 +14,7 @@ use PHPStanFixer\Utilities\TypeInferrer;
 
 class MissingParameterTypeFixer extends CacheAwareFixer
 {
+    private array $properties = [];
     private SmartTypeAnalyzer $smartAnalyzer;
     private FlowCache $flowCache;
     
@@ -63,13 +64,14 @@ class MissingParameterTypeFixer extends CacheAwareFixer
             $this->smartAnalyzer->setCurrentFile($this->currentFile);
         }
 
+        // Collect class properties first
+        $this->collectProperties($stmts);
+        
         // Run smart analysis first
         $this->smartAnalyzer->analyze($stmts);
         
         // Save flow data after analysis
-        if ($this->flowCache) {
-            $this->flowCache->save();
-        }
+        $this->flowCache->save();
 
         // Extract parameter info from error message (two possible formats)
         $message = $error->getMessage();
@@ -110,13 +112,22 @@ class MissingParameterTypeFixer extends CacheAwareFixer
                             && $param->var->name === $this->paramName
                             && $param->type === null) {
                             
-                            // Try smart analysis first – only accept informative types
+                            // Try smart analysis first – but validate the result
                             $smartType = $this->smartAnalyzer->getParameterType($this->className, $this->methodName, $this->paramName);
-                            if ($smartType && !in_array($smartType, ['mixed', 'null'], true)) {
+                            if ($smartType && $this->isValidSmartTypeLocal($smartType)) {
                                 $inferredType = $this->simplifyClassName($smartType);
                             } else {
                                 // Fallback to enhanced heuristic inference
                                 $inferredType = $this->inferParameterTypeEnhanced($param, $node);
+                            }
+                            
+                            // Check if parameter has null default - if so, make it nullable
+                            if ($param->default !== null && $param->default instanceof Node\Expr\ConstFetch 
+                                && $param->default->name->toString() === 'null') {
+                                // Only make it nullable if it's not already a union type
+                                if (!str_contains($inferredType, '|')) {
+                                    $inferredType = $inferredType . '|null';
+                                }
                             }
                             
                             $insertionPos = $param->var->getAttribute('startFilePos');
@@ -247,6 +258,39 @@ class MissingParameterTypeFixer extends CacheAwareFixer
                 
                 return $inferredType;
             }
+            
+            /**
+             * Validate if a smart type is safe to use (simplified version for visitor)
+             */
+            private function isValidSmartTypeLocal(string $smartType): bool
+            {
+                // Don't accept purely uninformative types
+                if (in_array($smartType, ['mixed', 'null', ''], true)) {
+                    return false;
+                }
+                
+                // Don't accept complex union types with questionable combinations
+                if (str_contains($smartType, '|')) {
+                    $unionParts = explode('|', $smartType);
+                    $unionParts = array_map('trim', $unionParts);
+                    
+                    // Reject unions that are too complex or contain contradictory types
+                    if (count($unionParts) > 3) {
+                        return false;
+                    }
+                    
+                    // Check for conflicting basic types
+                    $hasString = in_array('string', $unionParts);
+                    $hasArray = in_array('array', $unionParts);
+                    
+                    // If we have string + array, this is likely wrong (could be used in foreach)
+                    if ($hasString && $hasArray) {
+                        return false;
+                    }
+                }
+                
+                return true;
+            }
         };
 
         $this->traverseWithVisitor($stmts, $visitor);
@@ -258,5 +302,165 @@ class MissingParameterTypeFixer extends CacheAwareFixer
         }
         
         return $content;
+    }
+    
+    /**
+     * Collect class properties to help with parameter type inference
+     */
+    private function collectProperties(array $stmts): void
+    {
+        $this->properties = [];
+        $propertiesArray = &$this->properties;
+        
+        $visitor = new class($propertiesArray) extends NodeVisitorAbstract {
+            private array $properties;
+            
+            public function __construct(array &$properties)
+            {
+                $this->properties = &$properties;
+            }
+            
+            public function enterNode(Node $node): ?Node
+            {
+                if ($node instanceof Node\Stmt\Property) {
+                    foreach ($node->props as $prop) {
+                        $propertyName = $prop->name->toString();
+                        $propertyType = null;
+                        
+                        // Get property type
+                        if ($node->type !== null) {
+                            $propertyType = $this->getTypeFromNode($node->type);
+                        }
+                        
+                        $this->properties[$propertyName] = $propertyType;
+                    }
+                }
+                
+                return null;
+            }
+            
+            private function getTypeFromNode(?Node $type): ?string
+            {
+                if ($type === null) {
+                    return null;
+                }
+                
+                if ($type instanceof Node\Name) {
+                    return $type->toString();
+                }
+                
+                if ($type instanceof Node\Identifier) {
+                    return $type->toString();
+                }
+                
+                if ($type instanceof Node\NullableType) {
+                    $innerType = $this->getTypeFromNode($type->type);
+                    return $innerType ? $innerType . '|null' : null;
+                }
+                
+                if ($type instanceof Node\UnionType) {
+                    $types = [];
+                    foreach ($type->types as $unionType) {
+                        $innerType = $this->getTypeFromNode($unionType);
+                        if ($innerType) {
+                            $types[] = $innerType;
+                        }
+                    }
+                    return implode('|', $types);
+                }
+                
+                return null;
+            }
+        };
+        
+        $this->traverseWithVisitor($stmts, $visitor);
+    }
+    
+    /**
+     * Validate if a smart type is safe to use
+     */
+    private function isValidSmartType(string $smartType): bool
+    {
+        // Don't accept purely uninformative types
+        if (in_array($smartType, ['mixed', 'null', ''], true)) {
+            return false;
+        }
+        
+        // Don't accept complex union types with questionable combinations
+        if (str_contains($smartType, '|')) {
+            $unionParts = explode('|', $smartType);
+            $unionParts = array_map('trim', $unionParts);
+            
+            // Reject unions that are too complex or contain contradictory types
+            if (count($unionParts) > 3) {
+                return false;
+            }
+            
+            // Check for conflicting basic types
+            $hasString = in_array('string', $unionParts);
+            $hasArray = in_array('array', $unionParts);
+            $hasInt = in_array('int', $unionParts);
+            $hasBool = in_array('bool', $unionParts);
+            
+            // If we have string + array, this is likely wrong (could be used in foreach)
+            if ($hasString && $hasArray) {
+                return false;
+            }
+            
+            // If we have too many conflicting basic types, be conservative
+            $basicTypeCount = (int)$hasString + (int)$hasArray + (int)$hasInt + (int)$hasBool;
+            if ($basicTypeCount > 2) {
+                return false;
+            }
+        }
+        
+        // Don't accept types that look like class names but may not exist
+        if (!$this->isBuiltinType($smartType) && !$this->isLikelyValidClassName($smartType)) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Check if a type is a built-in PHP type
+     */
+    private function isBuiltinType(string $type): bool
+    {
+        $builtinTypes = [
+            'string', 'int', 'float', 'bool', 'array', 'object', 'callable',
+            'resource', 'null', 'void', 'mixed', 'never', 'true', 'false'
+        ];
+        
+        // Handle union types
+        if (str_contains($type, '|')) {
+            $parts = explode('|', $type);
+            foreach ($parts as $part) {
+                $part = trim($part);
+                if (!in_array($part, $builtinTypes) && !str_starts_with($part, '\\')) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        
+        return in_array($type, $builtinTypes);
+    }
+    
+    /**
+     * Basic validation that a class name looks reasonable
+     */
+    private function isLikelyValidClassName(string $className): bool
+    {
+        // Remove leading backslash
+        $className = ltrim($className, '\\');
+        
+        // Should contain at least one namespace separator for non-global classes
+        if (!str_contains($className, '\\') && !ctype_upper($className[0])) {
+            return false;
+        }
+        
+        // Basic pattern validation
+        return preg_match('/^[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff\\\\]*$/', $className) === 1;
     }
 }

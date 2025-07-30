@@ -27,8 +27,6 @@ class PHPStanFixer
     private Filesystem $filesystem;
     private ?TypeCache $typeCache = null;
     private ?AtomicFixApplicator $atomicApplicator = null;
-    private SafetyChecker $safetyChecker;
-    private TypeConsistencyValidator $typeValidator;
 
     public function __construct(
         ?PHPStanRunner $phpstanRunner = null,
@@ -39,8 +37,6 @@ class PHPStanFixer
         $this->errorParser = $errorParser ?? new ErrorParser();
         $this->fixerRegistry = $fixerRegistry ?? new FixerRegistry();
         $this->filesystem = new Filesystem();
-        $this->safetyChecker = new SafetyChecker();
-        $this->typeValidator = new TypeConsistencyValidator();
         
         $this->registerDefaultFixers();
     }
@@ -132,6 +128,19 @@ class PHPStanFixer
             }
         }
         
+        // Clean up old backup files automatically
+        if ($this->atomicApplicator) {
+            try {
+                $removedCount = $this->atomicApplicator->cleanupOldBackups(3600); // 1 hour
+                if ($removedCount > 0) {
+                    $result->addMessage("Cleaned up {$removedCount} old backup file(s)");
+                }
+            } catch (\Exception $e) {
+                // Don't fail the operation for cleanup issues
+                error_log("Backup cleanup failed: " . $e->getMessage());
+            }
+        }
+        
         return $result;
     }
 
@@ -161,6 +170,8 @@ class PHPStanFixer
         $this->fixerRegistry->register(new Fixers\GenericTypeFixer($this->phpstanRunner));
         $this->fixerRegistry->register(new Fixers\TypeConsistencyFixer());
         $this->fixerRegistry->register(new Fixers\MissingGenericParameterFixer($this->phpstanRunner));
+        $this->fixerRegistry->register(new Fixers\RedundantTypeCheckFixer());
+        $this->fixerRegistry->register(new Fixers\WrongParameterTypeFixer());
     }
 
     /**

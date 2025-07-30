@@ -58,7 +58,7 @@ class ErrorParser
                         );
                     } elseif (is_array($error)) {
                         // Skip ignored pattern warnings
-                        if (isset($error['message']) && $this->isIgnoredPatternWarning($error['message'])) {
+                        if ($this->isIgnoredPatternWarning($error['message'])) {
                             continue;
                         }
                         

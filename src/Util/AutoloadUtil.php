@@ -6,7 +6,7 @@ class AutoloadUtil
 {
     private readonly string $composerPath;
 
-    public function __construct(?string $composerFile = null, ?string $projectRoot = null, private readonly bool $dev = true)
+    public function __construct(?string $composerFile = null)
     {
         $this->composerPath = ($composerFile ?: trim(getenv('COMPOSER') ?: '')) ?: './composer.json';
     }

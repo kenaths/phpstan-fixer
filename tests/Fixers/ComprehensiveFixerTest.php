@@ -165,10 +165,10 @@ PHP;
             }
         }
         
-        // Verify some fixes were applied
-        $this->assertStringContainsString('private mixed $database;', $fixedCode);
-        $this->assertStringContainsString('private mixed $logger;', $fixedCode);
-        $this->assertStringContainsString('mixed $database, mixed $logger', $fixedCode);
+        // Verify some fixes were applied - our fixer now infers specific types
+        $this->assertStringContainsString('private array $database;', $fixedCode);
+        $this->assertStringContainsString('private string $logger;', $fixedCode);
+        $this->assertStringContainsString('array $database, string $logger', $fixedCode);
         $this->assertStringContainsString('$id === null', $fixedCode);
         $this->assertStringNotContainsString('$unused = "debug";', $fixedCode);
         // Note: The isset() fix may not always apply depending on code structure

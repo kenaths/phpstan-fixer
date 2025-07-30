@@ -20,7 +20,7 @@ class SecureFileOperations
      */
     public static function validatePath(string $path): void
     {
-        if (!is_string($path) || empty($path)) {
+        if (empty($path)) {
             throw new InvalidArgumentException('Path must be a non-empty string');
         }
         

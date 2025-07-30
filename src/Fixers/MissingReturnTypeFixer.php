@@ -63,9 +63,7 @@ class MissingReturnTypeFixer extends CacheAwareFixer
         $this->smartAnalyzer->analyze($stmts);
         
         // Save flow data after analysis
-        if ($this->flowCache) {
-            $this->flowCache->save();
-        }
+        $this->flowCache->save();
 
         // Extract class and method name from error message
         preg_match('/Method (.*?)::(\w+)\(\)/', $error->getMessage(), $matches);
@@ -95,9 +93,9 @@ class MissingReturnTypeFixer extends CacheAwareFixer
                     && $node->name->toString() === $this->methodName
                     && $node->getLine() <= $this->targetLine) {
                     
-                    // Try smart analysis first
+                    // Try smart analysis first – but validate the result
                     $smartType = $this->smartAnalyzer->getReturnType($this->className, $this->methodName);
-                    if ($smartType) {
+                    if ($smartType && $this->isValidSmartTypeLocal($smartType)) {
                         $inferredType = $this->simplifyClassName($smartType);
                     } else {
                         // Fallback to traditional inference
@@ -528,6 +526,39 @@ class MissingReturnTypeFixer extends CacheAwareFixer
                     ];
                 }
             }
+            
+            /**
+             * Validate if a smart type is safe to use (simplified version for visitor)
+             */
+            private function isValidSmartTypeLocal(string $smartType): bool
+            {
+                // Don't accept purely uninformative types
+                if (in_array($smartType, ['mixed', 'null', ''], true)) {
+                    return false;
+                }
+                
+                // Don't accept complex union types with questionable combinations
+                if (str_contains($smartType, '|')) {
+                    $unionParts = explode('|', $smartType);
+                    $unionParts = array_map('trim', $unionParts);
+                    
+                    // Reject unions that are too complex or contain contradictory types
+                    if (count($unionParts) > 3) {
+                        return false;
+                    }
+                    
+                    // Check for conflicting basic types
+                    $hasString = in_array('string', $unionParts);
+                    $hasArray = in_array('array', $unionParts);
+                    
+                    // If we have string + array, this is likely wrong (could be used in foreach)
+                    if ($hasString && $hasArray) {
+                        return false;
+                    }
+                }
+                
+                return true;
+            }
         };
 
         $this->traverseWithVisitor($stmts, $visitor);
@@ -565,5 +596,93 @@ class MissingReturnTypeFixer extends CacheAwareFixer
         }
         
         return $content;
+    }
+    
+    /**
+     * Validate if a smart type is safe to use
+     */
+    private function isValidSmartType(string $smartType): bool
+    {
+        // Don't accept purely uninformative types
+        if (in_array($smartType, ['mixed', 'null', ''], true)) {
+            return false;
+        }
+        
+        // Don't accept complex union types with questionable combinations
+        if (str_contains($smartType, '|')) {
+            $unionParts = explode('|', $smartType);
+            $unionParts = array_map('trim', $unionParts);
+            
+            // Reject unions that are too complex or contain contradictory types
+            if (count($unionParts) > 3) {
+                return false;
+            }
+            
+            // Check for conflicting basic types
+            $hasString = in_array('string', $unionParts);
+            $hasArray = in_array('array', $unionParts);
+            $hasInt = in_array('int', $unionParts);
+            $hasBool = in_array('bool', $unionParts);
+            
+            // If we have string + array, this is likely wrong (could be used in foreach)
+            if ($hasString && $hasArray) {
+                return false;
+            }
+            
+            // If we have too many conflicting basic types, be conservative
+            $basicTypeCount = (int)$hasString + (int)$hasArray + (int)$hasInt + (int)$hasBool;
+            if ($basicTypeCount > 2) {
+                return false;
+            }
+        }
+        
+        // Don't accept types that look like class names but may not exist
+        if (!$this->isBuiltinType($smartType) && !$this->isLikelyValidClassName($smartType)) {
+            return false;
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Check if a type is a built-in PHP type
+     */
+    private function isBuiltinType(string $type): bool
+    {
+        $builtinTypes = [
+            'string', 'int', 'float', 'bool', 'array', 'object', 'callable',
+            'resource', 'null', 'void', 'mixed', 'never', 'true', 'false'
+        ];
+        
+        // Handle union types
+        if (str_contains($type, '|')) {
+            $parts = explode('|', $type);
+            foreach ($parts as $part) {
+                $part = trim($part);
+                if (!in_array($part, $builtinTypes) && !str_starts_with($part, '\\')) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        
+        return in_array($type, $builtinTypes);
+    }
+    
+    /**
+     * Basic validation that a class name looks reasonable
+     */
+    private function isLikelyValidClassName(string $className): bool
+    {
+        // Remove leading backslash
+        $className = ltrim($className, '\\');
+        
+        // Should contain at least one namespace separator for non-global classes
+        if (!str_contains($className, '\\') && !ctype_upper($className[0])) {
+            return false;
+        }
+        
+        // Basic pattern validation
+        return preg_match('/^[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff\\\\]*$/', $className) === 1;
     }
 }

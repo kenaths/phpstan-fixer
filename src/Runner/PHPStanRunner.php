@@ -116,7 +116,7 @@ class PHPStanRunner
      */
     private function validatePath(string $path): void
     {
-        if (!is_string($path) || empty($path)) {
+        if (empty($path)) {
             throw new InvalidArgumentException('Path must be a non-empty string');
         }
         
@@ -149,7 +149,7 @@ class PHPStanRunner
     {
         foreach ($options as $key => $value) {
             // Validate option key
-            if (!is_string($key) || empty($key)) {
+            if (empty($key)) {
                 throw new InvalidArgumentException('Option key must be a non-empty string');
             }
             

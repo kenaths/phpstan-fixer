@@ -89,7 +89,8 @@ PHP;
         $error = new Error('test.php', 3, 'Parameter $data of method Test::process() has no type specified.');
         $result = $this->fixer->fix($code, $error);
         
-        $this->assertStringContainsString('process(mixed $data)', $result);
+        // The fixer now infers 'array' from parameter name 'data' which is smarter than 'mixed'
+        $this->assertStringContainsString('process(array $data)', $result);
     }
 
     public function testFixesAlternateErrorMessage(): void

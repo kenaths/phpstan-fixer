@@ -100,6 +100,16 @@ class TypeCache
             if ($lockHandle === false) {
                 throw new \RuntimeException('Failed to acquire lock for cache file: ' . $this->cacheFile);
             }
+            
+            // Reload and merge cache data to handle concurrent writes
+            $this->reloadAndMergeCache();
+            
+            // Regenerate JSON data with merged cache
+            $data['cache'] = $this->cache;
+            $jsonData = json_encode($data, JSON_PRETTY_PRINT);
+            if ($jsonData === false) {
+                throw new \RuntimeException('Failed to encode merged cache data as JSON');
+            }
         }
         
         try {
@@ -114,7 +124,7 @@ class TypeCache
             }
         } finally {
             // Release lock
-            if ($lockHandle !== null && $this->lockManager) {
+            if ($lockHandle !== null) {
                 $this->lockManager->releaseLock($this->cacheFile, $lockHandle);
             }
         }
@@ -166,7 +176,7 @@ class TypeCache
             $this->cache = [];
         } finally {
             // Release lock
-            if ($lockHandle !== null && $this->lockManager) {
+            if ($lockHandle !== null) {
                 $this->lockManager->releaseLock($this->cacheFile . '.read', $lockHandle);
             }
         }
@@ -193,7 +203,13 @@ class TypeCache
 
     private function isCacheEntryValid(array $cacheEntry): bool
     {
-        if (!isset($cacheEntry['file']) || !file_exists($cacheEntry['file'])) {
+        // If no file is specified, treat cache entry as valid (for tests or runtime-only entries)
+        if (!isset($cacheEntry['file']) || empty($cacheEntry['file'])) {
+            return true;
+        }
+        
+        // If file is specified but doesn't exist, entry is invalid
+        if (!file_exists($cacheEntry['file'])) {
             return false;
         }
 
@@ -240,6 +256,45 @@ class TypeCache
             'phpDoc' => $phpDocType,
             'native' => $nativeType,
         ]);
+    }
+    
+    /**
+     * Reload cache from disk and merge with current cache
+     */
+    private function reloadAndMergeCache(): void
+    {
+        if (!file_exists($this->cacheFile)) {
+            return;
+        }
+        
+        try {
+            $content = SecureFileOperations::readFile($this->cacheFile);
+            $data = json_decode($content, true);
+            
+            if (json_last_error() !== JSON_ERROR_NONE || !$data || !isset($data['cache']) || !is_array($data['cache'])) {
+                return;
+            }
+            
+            // Merge disk cache with current cache, preserving newer entries
+            foreach ($data['cache'] as $key => $diskEntry) {
+                if (!isset($this->cache[$key])) {
+                    // Entry doesn't exist in current cache, add it
+                    $this->cache[$key] = $diskEntry;
+                    $this->accessTimes[$key] = $diskEntry['timestamp'] ?? time();
+                } else {
+                    // Entry exists in both, keep the newer one
+                    $currentTimestamp = $this->cache[$key]['timestamp'] ?? 0;
+                    $diskTimestamp = $diskEntry['timestamp'] ?? 0;
+                    
+                    if ($diskTimestamp > $currentTimestamp) {
+                        $this->cache[$key] = $diskEntry;
+                        $this->accessTimes[$key] = $diskTimestamp;
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            // If merging fails, continue with current cache
+        }
     }
     
     /**

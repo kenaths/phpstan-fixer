@@ -104,7 +104,8 @@ PHP;
         $error = new Error('test.php', 3, 'Property Test::$userName has no type specified');
         $result = $this->fixer->fix($code, $error);
         
-        $this->assertStringContainsString('private string|null $userName', $result);
+        // The fixer now infers non-nullable string for properties without defaults
+        $this->assertStringContainsString('private string $userName', $result);
     }
 
     public function testInfersIdFromPropertyName(): void
@@ -119,7 +120,8 @@ PHP;
         $error = new Error('test.php', 3, 'Property Test::$userId has no type specified');
         $result = $this->fixer->fix($code, $error);
         
-        $this->assertStringContainsString('private int|null $userId', $result);
+        // The fixer now infers non-nullable int for properties without defaults
+        $this->assertStringContainsString('private int $userId', $result);
     }
 
     public function testInfersBoolFromPropertyName(): void
@@ -134,7 +136,7 @@ PHP;
         $error = new Error('test.php', 3, 'Property Test::$isActive has no type specified');
         $result = $this->fixer->fix($code, $error);
         
-        // Property without default gets mixed type inference
-        $this->assertStringContainsString('private mixed $isActive', $result);
+        // The fixer now correctly infers bool from 'is' prefix pattern
+        $this->assertStringContainsString('private bool $isActive', $result);
     }
 }

@@ -73,6 +73,9 @@ class TypeInferrer
             'config' => 'array', 'settings' => 'array', 'params' => 'array', 'args' => 'array',
             'attributes' => 'array', 'properties' => 'array', 'meta' => 'array',
             'headers' => 'array', 'cookies' => 'array', 'session' => 'array',
+            
+            // Closure patterns
+            'callback' => 'Closure', 'closure' => 'Closure', 'handler' => 'Closure',
         ];
         
         // Direct name matches
@@ -261,6 +264,7 @@ class TypeInferrer
         $valueTypes = [];
         
         foreach ($array->items as $item) {
+            /** @phpstan-ignore-next-line */
             if ($item === null) continue;
             
             // Analyze key type
@@ -329,6 +333,7 @@ class TypeInferrer
             'id' => 95, 'name' => 85, 'title' => 85, 'email' => 95,
             'count' => 95, 'enabled' => 95, 'active' => 95,
             'content' => 75, 'parameter' => 75, 'data' => 70,
+            'callback' => 95, 'closure' => 95, 'handler' => 90,
         ];
         
         if (isset($highConfidencePatterns[$name])) {

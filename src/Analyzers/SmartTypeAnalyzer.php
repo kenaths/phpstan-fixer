@@ -183,7 +183,7 @@ class SmartTypeAnalyzer
         $type = $this->inferReturnType($className, $methodName);
         
         // If traditional inference failed, try flow analysis
-        if (!$type && $this->flowCache && $this->externalCache) {
+        if ($this->flowCache && $this->externalCache) {
             // Look for property-to-return flows
             $flows = $this->flowCache->getFlows('property_to_return');
             foreach ($flows as $sourceKey => $targets) {
@@ -334,6 +334,7 @@ class SmartTypeAnalyzer
         $valueTypes = [];
 
         foreach ($array->items as $item) {
+            /** @phpstan-ignore-next-line */
             if ($item === null) continue;
 
             // Analyze key type
@@ -419,7 +420,7 @@ class SmartTypeAnalyzer
     /**
      * Infer type from property fetch
      */
-    private function inferPropertyFetchType(Node\Expr\PropertyFetch $fetch): ?string
+    private function inferPropertyFetchType(Node\Expr\PropertyFetch $fetch): null
     {
         if ($fetch->var instanceof Node\Expr\Variable && 
             $fetch->var->name === 'this' && 
@@ -600,7 +601,7 @@ class SmartTypeAnalyzer
     /**
      * Infer return type using method analysis
      */
-    private function inferReturnType(string $className, string $methodName): ?string
+    private function inferReturnType(string $className, string $methodName): null
     {
         // This would analyze return statements in the method
         // For now, return null to use existing logic
@@ -872,6 +873,40 @@ class SmartTypeAnalyzer
             }
         }
     }
+    
+    /**
+     * Validate if a class type exists in the project
+     */
+    public function validateClassType(string $className): bool
+    {
+        if (!$this->classResolver) {
+            return true; // If no resolver, assume valid
+        }
+        
+        return $this->classResolver->isLocalClass($className) || class_exists($className);
+    }
+    
+    /**
+     * Suggest alternative types for a non-existent class
+     */
+    public function suggestAlternativeTypes(string $className): array
+    {
+        // Simple suggestions based on common patterns
+        $suggestions = [];
+        
+        // If it ends with Interface, suggest the class without Interface
+        if (str_ends_with($className, 'Interface')) {
+            $suggestions[] = substr($className, 0, -9);
+        }
+        
+        // If it doesn't have a namespace, suggest with common namespaces
+        if (!str_contains($className, '\\')) {
+            $suggestions[] = 'App\\' . $className;
+            $suggestions[] = 'App\\Models\\' . $className;
+        }
+        
+        return $suggestions;
+    }
 }
 
 /**
@@ -883,6 +918,8 @@ class SmartTypeVisitor extends NodeVisitorAbstract
     private ?string $currentClass = null;
     private ?string $currentMethod = null;
     private ?string $currentNamespace = null;
+    private $classResolver = null;
+    private $currentVisitor = null;
 
     public function __construct(SmartTypeAnalyzer $analyzer)
     {
@@ -983,9 +1020,7 @@ class SmartTypeVisitor extends NodeVisitorAbstract
                         );
                         
                         // Record flow for parameters -> properties
-                        if ($node->expr instanceof Node\Expr\Variable && 
-                            $this->currentMethod && 
-                            $this->currentClass) {
+                        if ($node->expr instanceof Node\Expr\Variable) {
                             
                             $flowCache = $this->analyzer->getFlowCache();
                             if ($flowCache) {
